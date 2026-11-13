@@ -91,8 +91,9 @@ def download_post(info, selected, work, cookies, progress, log, cancel):
         import shutil
         shutil.copyfile(path, final)
         files.append(final)
-        _progress(progress, 60 * (index+1)/len(info['_images']), f'保存原图 {index+1}/{len(info["_images"])}')
+        _progress(progress, 60 * (index+1)/len(info['_images']), f'保存原图 {index+1}/{len(info["_images"])}', download_percent=100*(index+1)/(len(info['_images'])+(0 if selected['id']=='images' else 1)))
     if selected['id'] == 'images':
+        _progress(progress, 82, '打包原图', download_percent=100)
         target = work / 'images.zip'
         with zipfile.ZipFile(target, 'w', zipfile.ZIP_STORED) as archive:
             for path in files:
@@ -101,6 +102,7 @@ def download_post(info, selected, work, cookies, progress, log, cancel):
         return target, '.zip'
     music = work / 'music.audio'
     _download_http(info['_music'], music, cookies=cookies, referer=info['url'], progress=None, cancel=cancel)
+    _progress(progress, 65, '处理图文画面', download_percent=100)
     # Normalize each source separately; originals are never modified.
     normalized = []
     for index, path in enumerate(files):
@@ -111,6 +113,6 @@ def download_post(info, selected, work, cookies, progress, log, cancel):
     playlist = work / 'slides.txt'
     playlist.write_text(''.join(f"file '{path.name}'\nduration 3\n" for path in normalized) + f"file '{normalized[-1].name}'\n", encoding='utf-8')
     target = work / 'result.mp4'
-    _progress(progress, 70, '合成带配乐的视频')
+    _progress(progress, 70, '合成带配乐的视频', download_percent=100)
     _run_process([_tool('ffmpeg'), '-v', 'error', '-y', '-f', 'concat', '-safe', '1', '-i', str(playlist), '-stream_loop', '-1', '-i', str(music), '-t', str(len(files)*3), '-r', '25', '-c:v', 'libopenh264', '-b:v', '4000k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart', str(target)], cancel=cancel, cwd=work, label='合成图文配乐视频')
     return target, '.mp4'

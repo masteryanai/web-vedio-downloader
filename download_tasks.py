@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import time
 import uuid
 from runtime import app_data_dir
 
@@ -55,7 +56,7 @@ def create(info, format_id, output):
     task = {'id':uuid.uuid4().hex, 'url':info['url'],
             'site':info['site'], 'title':info.get('title', '视频'), 'format_id':format_id,
             'format':{key:selected[key] for key in ('width','height','fps','vcodec','acodec') if selected.get(key) is not None},
-            'output':str(Path(output).expanduser().resolve()), 'state':'paused'}
+            'output':str(Path(output).expanduser().resolve()), 'state':'paused', 'created_at':time.time()}
     save(task)
     return task
 

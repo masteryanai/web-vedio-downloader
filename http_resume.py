@@ -18,6 +18,7 @@ def download(url, path, *, opener, headers, check, report):
             meta = {}
         offset = path.stat().st_size if path.exists() else 0
         if meta.get('done') and offset == meta.get('total') and offset > 0:
+            report(80, '下载文件已就绪', 0, 0)
             return
         validator = meta.get('etag') or meta.get('modified')
         request_headers = {**headers, 'Accept-Encoding':'identity'}
@@ -66,11 +67,12 @@ def download(url, path, *, opener, headers, check, report):
                         now = time.monotonic()
                         if now-last >= .15:
                             speed = (count-offset)/max(.01, now-started)
-                            report(80*count/total if total else 0, '续传中' if offset else '下载中', speed,
+                            report(80*count/total if total else None, '续传中' if offset else '下载中', speed,
                                    (total-count)/speed if total and speed else None)
                             last = now
                 if not count or total and count != total:
                     raise OSError('incomplete response')
+                report(80, '下载文件已就绪', 0, 0)
                 meta.update(total=count, done=True)
                 temporary = sidecar.with_suffix('.tmp')
                 temporary.write_text(json.dumps(meta)); temporary.replace(sidecar)

@@ -63,11 +63,13 @@ def _say(log, message, cookies=None):
         log(_safe_message(message, cookies))
 
 
-def _progress(callback, percent=0, stage="下载中", speed=None, eta=None):
+def _progress(callback, percent=0, stage="下载中", speed=None, eta=None, download_percent=None, phase=None):
     if callback:
         callback({
             "percent": max(0.0, min(100.0, float(percent or 0))),
             "stage": stage,
+            "download_percent": max(0.,min(100.,float(download_percent))) if download_percent is not None else None,
+            "phase": phase,
             "speed": speed,
             "eta": eta,
         })
@@ -438,6 +440,7 @@ def _yt_ui_formats(raw):
         groups[key] = {
             "id": f"yt-{index}", "label": label, "width": width, "height": height,
             "filesize": int(size) if size else None, "ext": "mp4", "_selector": selector,
+            "_component_sizes": {str(row.get("format_id")): _number(row.get("filesize") or row.get("filesize_approx")) for row in ([item,audio] if audio else [item])},
             "_audio_expected": bool(audio or item.get("acodec") not in (None, "none")),
             "_quality": _number(item.get("quality")), "_tbr": _number(item.get("tbr")),
         }
@@ -586,7 +589,7 @@ def _probe(path, cancel=None):
 
 
 def _verify(path, info, selected, progress, cancel):
-    _progress(progress, 90, "校验视频完整性")
+    _progress(progress, 90, "校验视频完整性", download_percent=100)
     result = _probe(path, cancel)
     expected_duration = _number(info.get("duration"))
     if expected_duration and result["duration"] < expected_duration - max(3, expected_duration * 0.01):
@@ -614,7 +617,7 @@ def _verify(path, info, selected, progress, cancel):
 
 
 def _remux(source, target, progress, cancel):
-    _progress(progress, 83, "无损封装为 MP4")
+    _progress(progress, 83, "无损封装为 MP4", download_percent=100)
     _run_process([
         _tool("ffmpeg"), "-hide_banner", "-v", "error", "-y", "-i", str(source),
         "-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart", str(target),
@@ -627,7 +630,7 @@ def _download_http(url, path, *, cookies, referer, progress, cancel):
         download(url, path, opener=_opener(cookies, urllib.parse.urlsplit(url).hostname or ""),
                  headers={"User-Agent": IPHONE_UA, "Referer": referer, "Accept": "*/*"},
                  check=lambda: _check_cancel(cancel),
-                 report=lambda percent, stage, speed, eta: _progress(progress, percent, stage, speed, eta))
+                 report=lambda percent, stage, speed, eta: _progress(progress, percent, stage, speed, eta, percent*1.25 if speed is not None and percent is not None else None, phase="download"))
     except ValueError as error:
         raise VideoError(str(error)) from None
 
@@ -665,7 +668,7 @@ def _download_cctv(info, selected, work, cookies, progress, log, cancel):
             piece = work / f'slice-{index:06d}.ts'
             _download_http(url, piece, cookies=cookies, referer=info['url'], progress=None, cancel=cancel)
             local.append(piece.name)
-            _progress(progress, 75*(index+1)/max(1, segment_count), f'央视分片 {index+1}/{segment_count}')
+            _progress(progress, 75*(index+1)/max(1, segment_count), f'央视分片 {index+1}/{segment_count}', download_percent=100*(index+1)/max(1, segment_count))
         local_playlist = work / 'local.m3u8'
         local_playlist.write_text('#EXTM3U\n'+'\n'.join(local)+'\n', encoding='utf-8', newline='\n')
 
@@ -688,7 +691,7 @@ def _download_cctv(info, selected, work, cookies, progress, log, cancel):
             _check_cancel(cancel)
             total = status.get('total_bytes') or status.get('total_bytes_estimate') or 0
             count = status.get('downloaded_bytes') or 0
-            _progress(progress, min(80, count / total * 80) if total else 0, '下载央视视频', status.get('speed'), status.get('eta'))
+            _progress(progress, min(80, count / total * 80) if total else 0, '下载央视视频', status.get('speed'), status.get('eta'), count/total*100 if total else None, phase='download')
         options.update({'outtmpl':str(work/'cctv.%(ext)s'), 'hls_prefer_native':True,
                         'progress_hooks':[native_progress],
                         'ffmpeg_location':str(Path(_tool('ffmpeg')).parent)})
@@ -717,14 +720,20 @@ def _download_ytdlp(info, selected, work, cookies, progress, log, cancel):
     ffmpeg = _tool("ffmpeg")
     final_paths = []
 
+    component_ids = selected['_selector'].split('+')
+    totals = {key: selected.get('_component_sizes', {}).get(key, 0) for key in component_ids}
+    counts = {}
     def download_hook(status):
         _check_cancel(cancel)
-        if status.get("status") == "downloading":
-            total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
-            downloaded = status.get("downloaded_bytes") or 0
-            _progress(progress, min(80, downloaded / total * 80) if total else 0, "下载中", status.get("speed"), status.get("eta"))
-        elif status.get("status") == "finished":
-            _progress(progress, 81, "处理视频文件")
+        if status.get('status') not in ('downloading','finished'): return
+        key = str((status.get('info_dict') or {}).get('format_id', ''))
+        if len(component_ids)==1: key=component_ids[0]
+        total = status.get('total_bytes') or status.get('total_bytes_estimate') or totals.get(key,0)
+        count = status.get('downloaded_bytes') or (total if status['status']=='finished' else 0)
+        totals[key]=total; counts[key]=count
+        known = all(totals.get(part,0)>0 for part in component_ids)
+        percent = min(100,100*sum(counts.get(part,0) for part in component_ids)/sum(totals[part] for part in component_ids)) if known else None
+        _progress(progress,(percent or 0)*.8,'下载音视频文件',status.get('speed'),status.get('eta'),percent,phase='download')
 
     def post_hook(status):
         _check_cancel(cancel)
@@ -859,10 +868,11 @@ def _perform_download(info: dict, format_id: str, output_dir: str, cookies: list
         raise VideoError("视频下载或处理失败，未生成成品。请检查网络、磁盘空间后重新解析。") from None
 
 
-def download_video(info, format_id, output_dir, cookies=None, progress=None, log=None, cancel=None, task_id=None):
+def download_video(info, format_id, output_dir, cookies=None, progress=None, log=None, cancel=None, task_id=None, lock_held=False):
     import download_tasks as tasks
     task = tasks.load(task_id) if task_id else tasks.create(info, format_id, output_dir)
-    with tasks.lock(task['id']):
+    from contextlib import nullcontext
+    with (nullcontext() if lock_held else tasks.lock(task['id'])):
         if task['format_id'] != format_id or Path(task['output']).resolve() != Path(output_dir).expanduser().resolve():
             raise VideoError('恢复任务的画质或保存位置不一致。')
         selected = next((row for row in info.get('formats', []) if row['id'] == format_id), {})
@@ -873,8 +883,16 @@ def download_video(info, format_id, output_dir, cookies=None, progress=None, log
             tasks.remove(task)
             return result
         task['state'] = 'running'; tasks.save(task)
+        last_saved = [0.0]
+        def report(data):
+            if data.get('download_percent') is not None or data.get('phase') == 'download':
+                task['download_percent'] = data['download_percent']
+            task['stage'] = data.get('stage', '')
+            if time.monotonic()-last_saved[0] >= .75:
+                tasks.save(task); last_saved[0] = time.monotonic()
+            if progress: progress(data)
         try:
-            result = _perform_download(info, format_id, output_dir, cookies, progress, log, cancel, tasks.work_path(task))
+            result = _perform_download(info, format_id, output_dir, cookies, report, log, cancel, tasks.work_path(task))
             task.update(state='completed', result=result); tasks.save(task)
         except Exception:
             task['state'] = 'paused' if cancel is not None and cancel.is_set() else 'failed'

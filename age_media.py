@@ -22,7 +22,7 @@ def inspect_age(url, cookies=None, log=None, cancel=None):
             channels.append(channel)
     if not channels:
         raise VideoError('AGE 动漫解析需要本机安装 Chrome 或 Edge 浏览器。')
-    _say(log, '正在使用独立浏览器会话读取 AGE 正片地址；不会将短提示片当成正片。')
+    _say(log, 'AGE：启动浏览器并加载播放页。')
     with sync_playwright() as playwright:
         browser = None
         for channel in channels:
@@ -37,6 +37,7 @@ def inspect_age(url, cookies=None, log=None, cancel=None):
             raise VideoError('无法启动 Chrome 或 Edge 解析播放页，请确认浏览器能正常运行。')
         try:
             context = browser.new_context()
+            context.route('**/*', lambda route: route.abort() if route.request.resource_type in ('image','font') else route.continue_())
             page = context.new_page()
             try:
                 page.goto(url, wait_until='domcontentloaded', timeout=25000)
@@ -54,19 +55,29 @@ def inspect_age(url, cookies=None, log=None, cancel=None):
                             if (!video || !Number.isFinite(video.duration) || video.duration < 60
                                 || !/^https?:/.test(video.currentSrc)) return null;
                             return {url:video.currentSrc,duration:video.duration,
-                                width:video.videoWidth,height:video.videoHeight};
+                                width:video.videoWidth,height:video.videoHeight,
+                                hasAudio:Boolean(video.audioTracks?.length || video.webkitAudioDecodedByteCount>0)};
                         }''')
                     except Exception:
                         continue
                     if not media:
                         continue
                     title = re.sub(r'\s*-\s*在线播放.*$', '', page.title()).strip() or 'AGE动漫'
-                    # Check the selected source itself, including codecs and duration.
-                    import json
-                    probe = _run_process([find_tool('ffprobe'), '-v', 'error', '-rw_timeout', '15000000',
-                        '-show_entries', 'stream=codec_type,width,height:format=duration,size',
-                        '-of', 'json=compact=1', media['url']], cancel=cancel, label='AGE正片信息校验')
-                    data = json.loads(probe)
+                    # The player has already parsed the actual source metadata. Avoid a second
+                    # network reader when it supplies coherent dimensions and duration.
+                    # The downloaded file still goes through ffprobe and full decode verification.
+                    if media.get('width',0)>0 and media.get('height',0)>0:
+                        streams = [{'codec_type':'video','width':media['width'],'height':media['height']}]
+                        if media.get('hasAudio'): streams.append({'codec_type':'audio'})
+                        data = {'streams':streams,'format':{'duration':media['duration']}}
+                    else:
+                        import json
+                        _say(log, 'AGE：播放器元数据不足，正在探测正片信息。')
+                        probe = _run_process([find_tool('ffprobe'), '-v', 'error', '-rw_timeout', '15000000',
+                            '-analyzeduration', '1000000', '-probesize', '1048576',
+                            '-show_entries', 'stream=codec_type,width,height:format=duration,size',
+                            '-of', 'json=compact=1', media['url']], cancel=cancel, label='AGE正片信息校验')
+                        data = json.loads(probe)
                     videos = [stream for stream in data.get('streams', []) if stream.get('codec_type') == 'video']
                     if not videos or _number(data.get('format', {}).get('duration')) < 60:
                         continue
@@ -75,7 +86,7 @@ def inspect_age(url, cookies=None, log=None, cancel=None):
                     duration = _number(data['format'].get('duration'))
                     _say(log, f'AGE 正片已识别：{width}×{height}，时长约 {int(duration)} 秒。')
                     return {'title':title,'site':'AGE动漫','url':url,'duration':duration,
-                        '_engine':'age', 'formats':[{'id':'source','label':f'{width}×{height} · 网站原始视频',
+                        '_engine':'age', '_resolved_at':time.monotonic(), 'formats':[{'id':'source','label':f'{width}×{height} · 网站原始视频',
                         'width':width,'height':height,'ext':'mp4','filesize':int(_number(data['format'].get('size'))) or None,
                         '_media_url':media['url'], '_audio_expected':any(s.get('codec_type')=='audio' for s in data.get('streams', []))}]}
                 page.wait_for_timeout(700)
@@ -85,12 +96,26 @@ def inspect_age(url, cookies=None, log=None, cancel=None):
 
 
 def download_age(info, selected, work, cookies, progress, log, cancel):
-    from engine import _download_http, _remux
-    # Refresh the expiring media link for every new download.
-    refreshed = inspect_age(info['url'], cookies, log, cancel)
+    from engine import _download_http, _remux, _probe, _progress
+    from engine import VideoError, _say
+    refreshed = info if time.monotonic()-info.get('_resolved_at', -10000) < 300 else inspect_age(info['url'], cookies, log, cancel)
     source = work / 'source.mp4'
-    _download_http(refreshed['formats'][0]['_media_url'], source, cookies=None,
-        referer=info['url'], progress=progress, cancel=cancel)
+    for attempt in range(2):
+        current = refreshed['formats'][0]
+        if any(selected.get(key) and current.get(key) != selected[key] for key in ('width','height')):
+            raise VideoError('AGE 原任务画质已变化，请取消后重新下载。')
+        _say(log, 'AGE：连接视频源，确认已下载进度。')
+        try:
+            _download_http(current['_media_url'], source, cookies=None,
+                referer=info['url'], progress=progress, cancel=cancel)
+            break
+        except VideoError as error:
+            if attempt or '过期' not in str(error): raise
+            _say(log, 'AGE：媒体地址已失效，正在刷新一次。')
+            refreshed = inspect_age(info['url'], cookies, log, cancel)
+    _progress(progress, 82, '检查已下载的媒体信息', download_percent=100)
+    source_info = _probe(source, cancel)
+    selected['_audio_expected'] = bool(selected.get('_audio_expected') or source_info['_has_audio'])
     target = work / 'result.mp4'
     _remux(source, target, progress, cancel)
     return target
