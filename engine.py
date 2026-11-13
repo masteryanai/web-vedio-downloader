@@ -162,7 +162,7 @@ def _json(url, **kwargs):
 
 
 def _extract_url(text):
-    match = re.search(r"https?://[^\s<>\"'，。！？【】（）]+", str(text or ""), re.I)
+    match = re.search(r"https?://[^\s<>\"'，。！？【】（）]+", str(text or "").replace("https\\://", "https://").replace("http\\://", "http://"), re.I)
     if not match:
         raise VideoError("请粘贴视频网址，或包含网址的分享文案。")
     url = match.group(0).rstrip(".,;:!?)）]】}＞>")
@@ -196,11 +196,12 @@ def _normalize_url(text, cookies=None, cancel=None):
         _, url, _ = _fetch(url, cookies=cookies, cancel=cancel)
     if _site(url) == "抖音":
         parsed = urllib.parse.urlsplit(url)
-        match = re.search(r"/(?:share/)?video/(\d+)", parsed.path)
+        match = re.search(r"/(?:share/)?(?:video|note|slides)/(\d+)", parsed.path)
         if not match:
             match = re.search(r"(?:^|&)(?:modal_id|aweme_id)=(\d+)", parsed.query)
         if match:
-            url = f"https://www.douyin.com/video/{match.group(1)}"
+            kind = "note" if re.search(r"/(?:share/)?(?:note|slides)/", parsed.path) else "video"
+            url = f"https://www.douyin.com/{kind}/{match.group(1)}"
     if urllib.parse.urlsplit(url).hostname == "m.bilibili.com":
         parsed = urllib.parse.urlsplit(url)
         url = urllib.parse.urlunsplit(("https", "www.bilibili.com", parsed.path, parsed.query, ""))
@@ -759,11 +760,11 @@ def _filename(title):
     return name
 
 
-def _publish(source, output, title, cancel):
+def _publish(source, output, title, cancel, extension=".mp4"):
     base = _filename(title)
     for index in range(10000):
         _check_cancel(cancel)
-        target = output / f"{base}{f' ({index})' if index else ''}.mp4"
+        target = output / f"{base}{f' ({index})' if index else ''}{extension}"
         try:
             os.link(source, target)
             return target
@@ -805,6 +806,20 @@ def download_video(info: dict, format_id: str, output_dir: str, cookies: list[di
             raise VideoError("临时目录验证失败，已停止下载。")
         _say(log, f"开始下载：{info.get('title', '视频')}。", cookies)
         engine = info.get("_engine")
+        if engine == "douyin-post":
+            from douyin_media import download_post
+            target, extension = download_post(info, selected, work, cookies, progress, log, cancel)
+            if extension == ".zip":
+                import zipfile
+                with zipfile.ZipFile(target) as archive:
+                    if archive.testzip() is not None:
+                        raise VideoError("图片压缩包校验失败。")
+                result = {"width": 0, "height": 0, "duration": 0, "size": target.stat().st_size, "verified": True}
+            else:
+                result = _verify(target, {**info, "duration": 0}, selected, progress, cancel)
+            result["path"] = str(_publish(target, output, info.get("title"), cancel, extension))
+            _progress(progress, 100, "下载完成")
+            return result
         handler = {"cctv": _download_cctv, "haokan": _download_haokan, "yt-dlp": _download_ytdlp}.get(engine)
         if not handler:
             raise VideoError("视频信息已失效，请重新解析。")

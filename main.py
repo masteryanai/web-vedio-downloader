@@ -22,6 +22,7 @@ HAOKAN_SAMPLE = "https://haokan.baidu.com/v?vid=6165840185958740297"
 
 
 def site_for_url(text: str) -> str:
+    text = text.replace("https\\://", "https://").replace("http\\://", "http://")
     match = re.search(r"https?://[^\s<>\"'，。！？【】（）]+", text, re.I)
     if not match:
         return "其他网站"
@@ -115,6 +116,8 @@ def gui(args: argparse.Namespace) -> int:
             self.close_when_idle = False
             self.task_kind = ""
             self.last_result = None
+            self.browser_dialog = None
+            self.browser_result = None
             self.accounts = AccountManager(self)
             self.accounts.changed.connect(self.account_changed)
             self.accounts_dialog = None
@@ -272,7 +275,7 @@ def gui(args: argparse.Namespace) -> int:
             outer.addWidget(content, 1)
 
         def is_busy(self):
-            return self.active_thread is not None
+            return self.active_thread is not None or self.browser_dialog is not None
 
         def refresh_buttons(self):
             busy = self.is_busy()
@@ -413,7 +416,50 @@ def gui(args: argparse.Namespace) -> int:
             self.progress_bar.setRange(0, 0)
             self.detail.setText("部分网站可能需要先登录账号或完成访问验证。")
             self.append_log(f"开始解析：{site}")
-            self.start_task("inspect", lambda worker: inspect_video(text, cookies, worker.log.emit, self.cancel_event))
+            if site == "抖音":
+                from engine import _extract_url
+                from douyin_browser import DouyinCapture
+                self.task_kind = "inspect"
+                self.browser_result = None
+                self.browser_dialog = DouyinCapture(self.accounts._profile("抖音"), _extract_url(text), self)
+                self.browser_dialog.captured.connect(self.capture_received)
+                self.browser_dialog.finished.connect(self.capture_finished)
+                self.browser_dialog.show()
+                self.detail.setText("请在新窗口查看官方作品页面；需要时手动完成登录或验证。")
+                self.refresh_buttons()
+            else:
+                self.start_task("inspect", lambda worker: inspect_video(text, cookies, worker.log.emit, self.cancel_event))
+
+        def capture_received(self, info):
+            self.browser_result = info
+
+        def capture_finished(self, _result):
+            self.browser_dialog = None
+            if self.browser_result:
+                try:
+                    self.accounts._import_current("抖音", "抖音" in self.accounts._remembered)
+                except OSError:
+                    self.append_log("会话可用于本次下载，但未能更新本机加密存储。")
+                self.task_kind = "inspect"
+                self.task_success(self.browser_result)
+                self.task_kind = ""
+                self.refresh_buttons()
+                if self.info.get("_kind") == "images":
+                    choice = QMessageBox(self)
+                    choice.setWindowTitle("选择图文保存方式")
+                    choice.setText(f"检测到 {len(self.info['_images'])} 张图片，请选择保存方式。")
+                    choice.setInformativeText("合成视频将按原图顺序展示，每张 3 秒，并使用作品配乐。")
+                    originals = choice.addButton("保存原图", QMessageBox.ButtonRole.AcceptRole)
+                    movie = choice.addButton("合成带配乐的视频", QMessageBox.ButtonRole.ActionRole)
+                    choice.addButton("稍后选择", QMessageBox.ButtonRole.RejectRole)
+                    choice.exec()
+                    self.quality.setCurrentIndex(1 if choice.clickedButton() is movie else 0)
+            else:
+                self.task_failure("已取消抖音解析，未开始下载；可重新打开官方页面完成验证后重试。")
+                self.task_kind = ""
+                self.refresh_buttons()
+            if self.close_when_idle:
+                self.close()
 
         def download(self):
             if not self.info:
@@ -438,7 +484,7 @@ def gui(args: argparse.Namespace) -> int:
                 self.video_title.setText(result["title"])
                 duration = float(result.get("duration") or 0)
                 duration_label = f"{int(duration)//60:02d}:{int(duration)%60:02d}" if duration else "时长待检测"
-                self.video_meta.setText(f"{result['site']}  ·  {duration_label}  ·  {len(result['formats'])} 档可用画质")
+                self.video_meta.setText(f"{result['site']}  ·  {duration_label}  ·  {len(result['formats'])} 种可选格式")
                 self.quality.clear()
                 for option in result["formats"]:
                     self.quality.addItem(option["label"], option["id"])
@@ -510,6 +556,9 @@ def gui(args: argparse.Namespace) -> int:
 
         def cancel(self):
             self.cancel_event.set()
+            if self.browser_dialog is not None:
+                self.browser_dialog.reject()
+                return
             self.cancel_button.setEnabled(False)
             self.status_text.setText("正在停止，请等待当前请求结束")
 
