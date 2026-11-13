@@ -1,4 +1,6 @@
-# Web Video Downloader v0.4.0
+# Web Video Downloader v0.4.1
+
+修正音视频下载到 100% 后内部合并阶段的状态显示，明确提示仍在处理。保留 v0.4.0 的全部优化。
 
 ## 下载任务与并行设置
 
@@ -21,7 +23,7 @@
 
 在软件内检查更新即可升级，无需 GitHub 认证。请下载并解压完整 ZIP，保留原下载目录和任务缓存。
 
-- `WebVideoDownloader-v0.4.0-windows-x64.zip`
+- `WebVideoDownloader-v0.4.1-windows-x64.zip`
 - `SHA256SUMS.txt`
 - `update.json`
 

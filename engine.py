@@ -737,6 +737,8 @@ def _download_ytdlp(info, selected, work, cookies, progress, log, cancel):
 
     def post_hook(status):
         _check_cancel(cancel)
+        if status.get("status") == "started":
+            _progress(progress, 81, "合并或处理音视频文件")
         if status.get("status") == "finished":
             path = (status.get("info_dict") or {}).get("filepath")
             if path:
