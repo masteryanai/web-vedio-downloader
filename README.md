@@ -35,6 +35,7 @@ Windows 本地视频下载工具，用于验证“粘贴网页链接、选择真
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe prepare_tools.py
 .\.venv\Scripts\python.exe main.py
 ```
 
