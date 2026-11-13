@@ -17,13 +17,15 @@ REPO = 'masteryanai/web-vedio-downloader'
 API = f'https://api.github.com/repos/{REPO}/releases/latest'
 PREFIX = f'https://github.com/{REPO}/releases/download/'
 ASSETS = f'https://api.github.com/repos/{REPO}/releases/assets/'
+LATEST = f'https://github.com/{REPO}/releases/latest'
+TAGS = f'https://github.com/{REPO}/releases/tag/'
 
 
 def request(url, asset=False):
-    if not (url.startswith(PREFIX) or url.startswith(f'https://api.github.com/repos/{REPO}/releases')):
+    if not (url == LATEST or url.startswith(PREFIX) or url.startswith(f'https://api.github.com/repos/{REPO}/releases')):
         raise RuntimeError('拒绝访问更新仓库之外的地址。')
     headers={'User-Agent':'WebVideoDownloader-Updater','Accept':'application/octet-stream' if asset else 'application/vnd.github+json'}
-    return urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=30)
+    return urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=10 if url==API else 30)
 
 
 def asset_url(asset):
@@ -41,20 +43,63 @@ def version(value):
 
 def get_json(url, asset=False):
     with request(url,asset) as response:
-        return json.loads(response.read(2*1024*1024))
+        content=response.read(2*1024*1024+1)
+        if len(content)>2*1024*1024:
+            raise RuntimeError('更新清单过大，已停止更新。')
+        return json.loads(content)
 
 
 def check_update():
     try:
-        release = get_json(API)
+        return check_api_update()
     except urllib.error.HTTPError as error:
-        if error.code == 404:
-            return {'available':False, 'message':'尚未找到正式发布版本，请稍后重试或到发布页查看。'}
-        if error.code in (403,429):
-            raise RuntimeError('GitHub 暂时限制更新请求，请稍后重试或到发布页手动下载。') from None
-        raise RuntimeError('无法连接 GitHub 检查更新，请稍后重试。') from None
+        error.close()
+        if error.code not in (403,404,429) and error.code < 500:
+            raise RuntimeError('无法读取 GitHub 更新信息，请到发布页查看。') from None
     except (urllib.error.URLError, TimeoutError, OSError):
-        raise RuntimeError('无法连接 GitHub 检查更新，请检查网络后重试。') from None
+        pass
+    return check_public_update()
+
+
+def validate_manifest(manifest, tag):
+    if not isinstance(manifest, dict) or manifest.get('version') != tag.lstrip('v') or manifest.get('application') != 'WebVideoDownloader':
+        raise RuntimeError('更新信息与发布版本不一致。')
+    digest=manifest.get('sha256')
+    if not isinstance(digest,str) or not re.fullmatch('[0-9a-f]{64}',digest):
+        raise RuntimeError('更新包缺少有效校验信息。')
+    if type(manifest.get('size')) is not int or manifest['size']<=0:
+        raise RuntimeError('更新包大小信息无效。')
+    if manifest.get('asset') != f'WebVideoDownloader-v{tag.lstrip("v")}-windows-x64.zip':
+        raise RuntimeError('更新包名称不正确。')
+
+
+def check_public_update():
+    try:
+        with request(LATEST) as response:
+            location=response.geturl()
+        match=re.fullmatch(re.escape(TAGS)+r'(v?\d+\.\d+\.\d+)', location)
+        if not match:
+            raise RuntimeError('公开发布页未返回本仓库的正式版本，已停止更新。')
+        tag=match[1]
+        if version(tag)<=version(APP_VERSION):
+            return {'available':False,'message':f'已是最新版本 {APP_VERSION}（通过公开发布页检查）。'}
+        # Resolve latest once, then pin manifest and ZIP to the same immutable tag.
+        manifest=get_json(PREFIX+tag+'/update.json',asset=True)
+        validate_manifest(manifest,tag)
+        return {'available':True,'manifest':manifest,'version':manifest['version'],
+                'url':PREFIX+tag+'/'+manifest['asset'],
+                'notes':'GitHub API 暂不可用，已改用公开发布页检查更新，无需认证。\n发布说明：'+TAGS+tag}
+    except urllib.error.HTTPError as error:
+        error.close()
+        if error.code==404:
+            return {'available':False,'message':'公开发布页或更新清单尚未就绪，请稍后重试或到发布页手动下载。'}
+        raise RuntimeError('GitHub API 和公开发布地址暂不可用，请稍后重试或到发布页手动下载。') from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise RuntimeError('无法连接公开发布地址，请检查网络，或到发布页手动下载。') from None
+
+
+def check_api_update():
+    release = get_json(API)
     if release.get('draft') or release.get('prerelease'):
         raise RuntimeError('未找到正式发布版本。')
     if version(release['tag_name']) <= version(APP_VERSION):
@@ -63,10 +108,7 @@ def check_update():
     if not asset:
         raise RuntimeError('此版本未提供兼容的在线更新信息，请到发布页手动下载。')
     manifest = get_json(asset_url(asset),asset=True)
-    if manifest.get('version') != release['tag_name'].lstrip('v') or manifest.get('application') != 'WebVideoDownloader':
-        raise RuntimeError('更新信息与发布版本不一致。')
-    if not re.fullmatch('[0-9a-f]{64}', manifest.get('sha256','')):
-        raise RuntimeError('更新包缺少有效校验信息。')
+    validate_manifest(manifest,release['tag_name'])
     package = next((a for a in release['assets'] if a['name']==manifest.get('asset')), None)
     if not package or package['size'] != manifest.get('size'):
         raise RuntimeError('更新包与校验信息不一致。')
@@ -152,6 +194,12 @@ def show_update_dialog(parent):
             self.notes=QPlainTextEdit();self.notes.setReadOnly(True);layout.addWidget(self.notes)
             self.bar=QProgressBar();self.bar.setRange(0,0);layout.addWidget(self.bar)
             self.install=QPushButton('下载并安装更新');self.install.setEnabled(False);self.install.clicked.connect(self.download);layout.addWidget(self.install)
+            page=QPushButton('打开发布页');layout.addWidget(page)
+            def open_page():
+                from PySide6.QtCore import QUrl
+                from PySide6.QtGui import QDesktopServices
+                QDesktopServices.openUrl(QUrl(LATEST))
+            page.clicked.connect(open_page)
             self.stop=QPushButton('关闭');self.stop.clicked.connect(self.close);layout.addWidget(self.stop)
             self.start(lambda progress:check_update(),self.checked)
         def start(self,action,success):
