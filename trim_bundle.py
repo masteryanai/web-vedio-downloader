@@ -31,6 +31,8 @@ def trim() -> None:
         duplicate = internal / original.name
         if duplicate.is_file() and hashlib.sha256(original.read_bytes()).digest() == hashlib.sha256(duplicate.read_bytes()).digest():
             remove(duplicate)
+    if (internal / "tools" / "node.exe").is_file():
+        remove(internal / "playwright" / "driver" / "node.exe")
     remove(internal / "PySide6" / "resources" / "qtwebengine_devtools_resources.debug.pak")
     locales = internal / "PySide6" / "translations" / "qtwebengine_locales"
     for locale in locales.glob("*.pak"):

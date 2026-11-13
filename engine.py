@@ -184,6 +184,8 @@ def _site(url):
         return "抖音"
     if belongs("bilibili.com", "b23.tv", "bili2233.cn"):
         return "B站"
+    if belongs("agedm.io"):
+        return "AGE动漫"
     if belongs("youku.com", "youku.tv"):
         return "优酷"
     return "其他网站"
@@ -483,6 +485,9 @@ def inspect_video(url: str, cookies: list[dict] | None = None, log=None, cancel:
         if site == "优酷":
             raise VideoError("优酷适配已暂时移除，当前不支持解析和下载优酷链接。")
         _say(log, f"正在解析{site}视频。")
+        if site == "AGE动漫":
+            from age_media import inspect_age
+            return inspect_age(canonical, cookies, log, cancel)
         if site == "央视网":
             return _inspect_cctv(canonical, cookies, log, cancel)
         if site == "好看视频":
@@ -822,7 +827,8 @@ def download_video(info: dict, format_id: str, output_dir: str, cookies: list[di
             result["path"] = str(_publish(target, output, info.get("title"), cancel, extension))
             _progress(progress, 100, "下载完成")
             return result
-        handler = {"cctv": _download_cctv, "haokan": _download_haokan, "yt-dlp": _download_ytdlp}.get(engine)
+        from age_media import download_age
+        handler = {"age": download_age, "cctv": _download_cctv, "haokan": _download_haokan, "yt-dlp": _download_ytdlp}.get(engine)
         if not handler:
             raise VideoError("视频信息已失效，请重新解析。")
         target = handler(info, selected, work, cookies, progress, log, cancel)

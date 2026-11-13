@@ -32,7 +32,7 @@ def site_for_url(text: str) -> str:
         return "其他网站"
     sites = (("cctv.com", "央视网"), ("cntv.cn", "央视网"),
              ("haokan.baidu.com", "好看视频"), ("douyin.com", "抖音"),
-             ("bilibili.com", "B站"), ("b23.tv", "B站"), ("youku.com", "优酷"))
+             ("agedm.io", "AGE动漫"), ("bilibili.com", "B站"), ("b23.tv", "B站"), ("youku.com", "优酷"))
     for domain, name in sites:
         if host == domain or host.endswith("." + domain):
             return name
@@ -329,7 +329,8 @@ def gui(args: argparse.Namespace) -> int:
             rows = [("央视网", "tv.cctv.com", "下载已验证"),
                     ("好看视频", "haokan.baidu.com", "下载已验证"),
                     ("B站", "bilibili.com / b23.tv", "登录后下载已验证"),
-                    ("抖音", "douyin.com", "图文下载已验证")]
+                    ("抖音", "douyin.com", "图文下载已验证"),
+                    ("AGE动漫", "agedm.io", "单集播放页适配")]
             controls = QHBoxLayout()
             previous, following = QPushButton("上一页"), QPushButton("下一页")
             page_label = QLabel()

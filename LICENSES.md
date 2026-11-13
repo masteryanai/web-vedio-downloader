@@ -32,3 +32,7 @@ b1faadd1ea9c4fe3fb9b059b1f268f57ed111dbebfeda66700c85e12d1bd1c23
 央视格式处理依赖中的 `external/cctv.worker.js` 是上游仓库适配的外部播放器代码。原型保留其来源及上游文件；此处的 MIT 项目标注不构成对央视播放器代码的单独授权声明。
 
 本次原型没有为网站视频内容授予新的许可。账号会话与用户自行选择下载的内容不属于软件依赖许可证的一部分。
+
+## AGE 浏览器解析依赖
+
+Playwright for Python 1.65.1（Apache-2.0），用于调用本机Chrome/Edge；浏览器本体不随软件分发。运行时复用随包Node.js。Playwright许可原文随licenses目录保存。
