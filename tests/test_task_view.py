@@ -19,11 +19,11 @@ class TaskViewTest(unittest.TestCase):
 
 def gui_check():
     import json,time
-    from PySide6.QtWidgets import QApplication,QMessageBox,QStyleOptionViewItem
-    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication,QMessageBox,QStyleOptionViewItem,QProgressBar,QDialog
+    from PySide6.QtCore import Qt,QTimer
     import download_tasks as tasks
     from download_queue import DownloadQueue
-    from task_view import TaskDialog
+    from task_view import TaskDialog,DeleteDialog
     from PySide6.QtGui import QFont
     from main import STYLE
     app=QApplication([]);app.setFont(QFont('Microsoft YaHei UI',10));app.setStyleSheet(STYLE)
@@ -47,6 +47,9 @@ def gui_check():
             tasks.history_file('d'*32).write_text('{broken')
             queue=DownloadQueue();dialog=TaskDialog(queue,lambda _:None);dialog.show();settle()
             assert dialog.table.rowCount()==7
+            cell=dialog.table.cellWidget(0,1);bar=cell.findChild(QProgressBar)
+            assert abs(bar.y()-(cell.height()-bar.y()-bar.height()))<=1
+            assert bar.alignment()==Qt.AlignmentFlag.AlignCenter
             assert not dialog.table.wordWrap() and dialog.table.rowHeight(0)==32
             option=QStyleOptionViewItem()
             dialog.table.itemDelegateForColumn(0).initStyleOption(option,dialog.table.model().index(0,0))
@@ -57,8 +60,11 @@ def gui_check():
             screenshot=os.environ.get('TASK_VIEW_SCREENSHOT')
             if screenshot:dialog.grab().save(screenshot)
             dialog.tabs.setCurrentIndex(1);assert dialog.table.rowCount()==4
+            assert dialog.buttons['delete'].isHidden()
+            assert all(not dialog.buttons[key].isHidden() for key in ('pause','resume','cancel'))
             assert created[3]['id'] in dialog.visible # 100% while verifying is still ongoing.
             dialog.tabs.setCurrentIndex(2);assert dialog.table.rowCount()==2
+            assert not dialog.buttons['delete'].isHidden()
             dialog.tabs.setCurrentIndex(3);assert dialog.table.rowCount()==1
             dialog.tabs.setCurrentIndex(0)
             dialog.search.setText('AGE动漫');assert dialog.table.rowCount()==7
@@ -78,17 +84,37 @@ def gui_check():
             assert dialog.table.columnWidth(0)>before
             assert abs(dialog.table.horizontalHeader().length()-dialog.table.viewport().width())<=1
             if screenshot:dialog.grab().save(str(Path(screenshot).with_stem(Path(screenshot).stem+'-wide')))
-            def select_other(*_):
+            def select_other(choice):
+                assert choice.record_only.isChecked() and not choice.with_cache.isChecked()
                 dialog.search.setText('completed-two');dialog.refresh();dialog.table.selectRow(0)
-                return QMessageBox.StandardButton.Yes
-            with patch.object(QMessageBox,'question',side_effect=select_other):dialog.delete()
+                return QDialog.DialogCode.Accepted
+            with patch.object(DeleteDialog,'exec',new=select_other):dialog.delete()
             assert not tasks.history_file(selected).exists()
             assert tasks.load_record(created[5]['id'])['state']=='completed'
+            # Exercise actual modal cancellation and the second deletion choice.
+            dialog.search.setText('completed-two');settle();dialog.table.selectRow(0)
+            cache=tasks.work_path(created[5]);cache.mkdir(parents=True);(cache/'source.part').write_bytes(b'cache')
+            def close_choice():
+                choice=app.activeModalWidget();assert isinstance(choice,DeleteDialog)
+                assert choice.record_only.isChecked()
+                if screenshot:choice.grab().save(str(Path(screenshot).with_stem(Path(screenshot).stem+'-delete')))
+                choice.reject()
+            QTimer.singleShot(40,close_choice);dialog.delete()
+            assert tasks.history_file(created[5]['id']).exists() and cache.exists()
+            # Keep this fixture for the restart check; use the cancelled row for clean-cache deletion.
+            dialog.search.setText('cancelled');settle();dialog.table.selectRow(0)
+            cancelled_cache=tasks.work_path(created[6]);cancelled_cache.mkdir(parents=True)
+            (cancelled_cache/'source.part').write_bytes(b'cache')
+            def clean_choice():
+                choice=app.activeModalWidget();assert isinstance(choice,DeleteDialog)
+                choice.with_cache.setChecked(True);choice.accept()
+            QTimer.singleShot(40,clean_choice);dialog.delete()
+            assert not tasks.history_file(created[6]['id']).exists() and not cancelled_cache.exists()
             assert all(video.read_bytes()==b'user file' for video in outputs)
             # Re-read physical records in a fresh interpreter.
             code="import json,sys;from pathlib import Path;import download_tasks as t;t.directory=lambda:Path(sys.argv[1]);r=t.records();print(json.dumps([sum(x['state'] in ('queued','running','paused','failed') for x in r),sum(x['state']=='completed' for x in r),sum(x['state']=='cancelled' for x in r)]))"
             counts=json.loads(subprocess.check_output([sys.executable,'-c',code,str(registry)],text=True,encoding='utf-8'))
-            assert counts==[3,1,2],counts
+            assert counts==[3,1,1],counts
             dialog.close();settle()
     print('Task dialog layout/search/grouping/ID actions/history restart: PASS')
 

@@ -193,10 +193,10 @@ class DownloadQueue(QObject):
             self.failed.emit(task_id, '缓存删除失败：'+str(error))
         self.pump()
 
-    def delete_record(self,task_id):
+    def delete_record(self,task_id,clean_cache=False):
         if task_id in self.active or any(row[0]==task_id for row in self.waiting):
             raise ValueError('任务仍在运行或排队，不能删除记录。')
-        tasks.delete_history(task_id)
+        tasks.delete_history(task_id,clean_cache=clean_cache)
         self.completed_rows.pop(task_id,None);self.snapshots.pop(task_id,None)
         self.entries.pop(task_id,None);self.payloads.pop(task_id,None)
         self.changed.emit()

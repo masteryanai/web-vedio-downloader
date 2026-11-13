@@ -120,11 +120,18 @@ def finish(task):
     remove(task)
 
 
-def delete_history(task_id):
+def delete_history(task_id, clean_cache=False):
     with lock(task_id):
         task = load_record(task_id)
         if task['state'] not in TERMINAL:
             raise ValueError('未完成任务请先取消，不能直接删除历史记录。')
+        if clean_cache:
+            cache=work_path(task)
+            result=task.get('result')
+            published=result.get('path') if isinstance(result,dict) else None
+            if published and Path(published).resolve().is_relative_to(cache.resolve()):
+                raise ValueError('成品位于缓存目录内，已停止清理；请选择仅删除记录。')
+            if cache.exists():shutil.rmtree(cache)
         history_file(task_id).unlink(missing_ok=True)
         task_file(task_id).unlink(missing_ok=True)
 

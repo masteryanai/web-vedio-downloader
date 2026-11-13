@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt, QTimer, QEvent, QSignalBlocker
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,QTabBar,
     QTableWidget,QTableWidgetItem,QHeaderView,QAbstractItemView,QProgressBar,
-    QPushButton,QMessageBox,QStyledItemDelegate)
+    QPushButton,QMessageBox,QStyledItemDelegate,QWidget,QRadioButton,QDialogButtonBox)
 import download_tasks as tasks
 
 
@@ -20,6 +20,23 @@ class TitleDelegate(QStyledItemDelegate):
     def initStyleOption(self,option,index):
         super().initStyleOption(option,index)
         option.textElideMode=Qt.TextElideMode.ElideRight
+
+
+class DeleteDialog(QDialog):
+    def __init__(self,parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('删除历史记录');self.resize(480,230)
+        layout=QVBoxLayout(self)
+        description=QLabel('请选择删除范围。两种方式均保留已下载完成的 MP4／ZIP 文件。')
+        description.setWordWrap(True);layout.addWidget(description)
+        self.record_only=QRadioButton('仅删除记录');self.record_only.setChecked(True);layout.addWidget(self.record_only)
+        self.with_cache=QRadioButton('删除记录及该任务的临时缓存');layout.addWidget(self.with_cache)
+        note=QLabel('已取消任务通常已清理缓存。缓存清理失败时会保留记录，便于重试。')
+        note.setWordWrap(True);layout.addWidget(note)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText('确认删除')
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('取消')
+        buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
 
 
 class TaskDialog(QDialog):
@@ -51,7 +68,7 @@ class TaskDialog(QDialog):
         table.viewport().installEventFilter(self);layout.addWidget(table)
         controls=QHBoxLayout();self.buttons={}
         for key,text,action in (('pause','暂停所选任务',self.pause),('resume','继续所选任务',self.resume),
-                                ('cancel','取消下载',self.cancel),('delete','删除记录',self.delete)):
+                                ('cancel','取消下载',self.cancel),('delete','删除…',self.delete)):
             button=QPushButton(text);button.clicked.connect(action);controls.addWidget(button);self.buttons[key]=button
         layout.addLayout(controls)
         table.itemSelectionChanged.connect(self.update_actions)
@@ -113,11 +130,16 @@ class TaskDialog(QDialog):
                     item.setText(value.replace('\r',' ').replace('\n',' ') if j==0 else value)
                     item.setToolTip(value)
                     if j==0:item.setData(Qt.ItemDataRole.UserRole,task['id'])
-                bar=self.table.cellWidget(i,1)
-                if bar is None:bar=QProgressBar();self.table.setCellWidget(i,1,bar)
+                cell=self.table.cellWidget(i,1)
+                if cell is None:
+                    cell=QWidget();box=QVBoxLayout(cell);box.setContentsMargins(3,0,3,0)
+                    bar=QProgressBar(cell);bar.setFixedHeight(20);bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    box.addWidget(bar,0,Qt.AlignmentFlag.AlignVCenter)
+                    self.table.setCellWidget(i,1,cell)
+                else:bar=cell.findChild(QProgressBar)
                 percent=task.get('download_percent');bar.setRange(0,100);bar.setValue(int(percent or 0))
                 bar.setFormat(f'{percent:.1f}%' if isinstance(percent,(int,float)) else '总量未知')
-                bar.setTextVisible(True);bar.setFixedHeight(24)
+                bar.setTextVisible(True)
             self.table.clearSelection();self.table.setCurrentCell(-1,-1)
             if selected_id in self.visible:self.table.selectRow(ids.index(selected_id))
         self.table.horizontalScrollBar().setValue(scroll);self.table.verticalScrollBar().setValue(vertical)
@@ -134,6 +156,7 @@ class TaskDialog(QDialog):
         self.buttons['resume'].setEnabled(bool(task) and state not in tasks.TERMINAL and not active and not queued)
         self.buttons['cancel'].setEnabled(bool(task) and state not in tasks.TERMINAL)
         self.buttons['delete'].setEnabled(bool(task) and state in tasks.TERMINAL and not active and not queued)
+        self.buttons['delete'].setVisible(self.tabs.currentIndex() in (2,3) or (self.tabs.currentIndex()==0 and state in tasks.TERMINAL))
 
     def pause(self):
         task=self.selected()
@@ -159,9 +182,12 @@ class TaskDialog(QDialog):
         task=self.selected()
         if not task:return
         task_id=task['id']
-        if QMessageBox.question(self,'删除历史记录','只删除所选历史记录，保留已下载的文件？')==QMessageBox.StandardButton.Yes:
-            try:self.queue.delete_record(task_id)
+        if task['state'] not in tasks.TERMINAL:return
+        choice=DeleteDialog(self)
+        if choice.exec()==QDialog.DialogCode.Accepted:
+            try:self.queue.delete_record(task_id,clean_cache=choice.with_cache.isChecked())
             except Exception as error:QMessageBox.warning(self,'无法删除记录',str(error))
+        choice.deleteLater()
         self.refresh()
 
     def closeEvent(self,event):

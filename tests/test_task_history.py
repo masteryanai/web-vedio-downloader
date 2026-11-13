@@ -7,6 +7,40 @@ from download_queue import DownloadQueue
 
 
 class TaskHistory(unittest.TestCase):
+    def test_history_deletion_modes_never_delete_completed_or_other_files(self):
+        for clean in (False,True):
+            with self.subTest(clean=clean),tempfile.TemporaryDirectory() as folder,patch('download_tasks.directory',return_value=Path(folder)/'tasks'):
+                root=Path(folder);(root/'tasks').mkdir()
+                task=tasks.create({'url':'https://example.com/1','site':'test','title':'title'},'best',folder)
+                video=root/'finished.mp4';video.write_bytes(b'completed')
+                other=root/'other.mp4';other.write_bytes(b'other')
+                cache=tasks.work_path(task);cache.mkdir();(cache/'source.part').write_bytes(b'partial')
+                task.update(state='completed',result={'path':str(video)})
+                tasks.save(task);tasks.archive(task)
+                tasks.delete_history(task['id'],clean_cache=clean)
+                self.assertEqual(cache.exists(),not clean)
+                self.assertEqual(video.read_bytes(),b'completed');self.assertEqual(other.read_bytes(),b'other')
+                self.assertFalse(tasks.history_file(task['id']).exists())
+                self.assertFalse(tasks.task_file(task['id']).exists())
+
+    def test_cache_cleanup_failure_preserves_history(self):
+        with tempfile.TemporaryDirectory() as folder,patch('download_tasks.directory',return_value=Path(folder)):
+            task=tasks.create({'url':'https://example.com/1','site':'test','title':'title'},'best',folder)
+            task['state']='cancelled';tasks.save(task);tasks.archive(task);tasks.work_path(task).mkdir()
+            with patch('download_tasks.shutil.rmtree',side_effect=OSError('busy')):
+                with self.assertRaises(OSError):tasks.delete_history(task['id'],clean_cache=True)
+            self.assertEqual(tasks.load_record(task['id'])['state'],'cancelled')
+            self.assertTrue(tasks.history_file(task['id']).exists())
+
+    def test_completed_file_inside_cache_blocks_cleanup(self):
+        with tempfile.TemporaryDirectory() as folder,patch('download_tasks.directory',return_value=Path(folder)):
+            task=tasks.create({'url':'https://example.com/1','site':'test','title':'title'},'best',folder)
+            cache=tasks.work_path(task);cache.mkdir();video=cache/'finished.mp4';video.write_bytes(b'completed')
+            task.update(state='completed',result={'path':str(video)});tasks.save(task);tasks.archive(task)
+            with self.assertRaisesRegex(ValueError,'成品位于缓存'):tasks.delete_history(task['id'],clean_cache=True)
+            self.assertTrue(tasks.history_file(task['id']).exists());self.assertEqual(video.read_bytes(),b'completed')
+            tasks.delete_history(task['id']);self.assertEqual(video.read_bytes(),b'completed')
+
     def test_terminal_records_persist_and_delete_never_deletes_outputs(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);registry=root/'tasks';registry.mkdir()
