@@ -1,0 +1,14 @@
+{
+  "repository": "FFmpeg-Builds/FFmpeg-Builds",
+  "release": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/tag/latest",
+  "tag": "latest",
+  "name": "ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip",
+  "url": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip",
+  "sha256": "b1faadd1ea9c4fe3fb9b059b1f268f57ed111dbebfeda66700c85e12d1bd1c23",
+  "github_digest": "sha256:b1faadd1ea9c4fe3fb9b059b1f268f57ed111dbebfeda66700c85e12d1bd1c23",
+  "size": 76525912,
+  "node": {
+    "version": "24.14.1",
+    "source": "https://github.com/nodejs/node/releases/tag/v24.14.1"
+  }
+}

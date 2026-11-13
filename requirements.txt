@@ -1,0 +1,3 @@
+PySide6==6.12.0
+yt-dlp==2026.10.26
+pyinstaller==6.22.3
