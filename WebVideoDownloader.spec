@@ -1,9 +1,12 @@
 # Build a portable folder so the media tools and browser runtime stay replaceable.
 from pathlib import Path
+import json
 from PyInstaller.utils.hooks import collect_submodules
 
 root = Path(SPECPATH)
 datas = [
+    (str(root / "sites.json"), "."),
+    (str(root / "update_helper.ps1"), "."),
     (str(root / "tools"), "tools"),
     (str(root / "vendor"), "vendor"),
     (str(root / "licenses"), "licenses"),
@@ -16,7 +19,7 @@ analysis = Analysis(
     pathex=[str(root)],
     binaries=[],
     datas=datas,
-    hiddenimports=collect_submodules("yt_dlp.extractor"),
+    hiddenimports=collect_submodules("yt_dlp.extractor") + [row["handler"].split(":")[0] for row in json.loads((root/"sites.json").read_text(encoding="utf-8"))],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -39,7 +42,7 @@ exe = EXE(
     analysis.scripts,
     [],
     exclude_binaries=True,
-    name="WebVideoDownloaderPrototype",
+    name="WebVideoDownloader",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -54,5 +57,5 @@ collection = COLLECT(
     analysis.datas,
     strip=False,
     upx=False,
-    name="WebVideoDownloaderPrototype",
+    name="WebVideoDownloader",
 )

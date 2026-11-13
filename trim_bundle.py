@@ -7,7 +7,7 @@ from pathlib import Path
 
 def trim() -> None:
     root = Path(__file__).resolve().parent
-    release = (root / "dist" / "WebVideoDownloaderPrototype").resolve()
+    release = (root / "dist" / "WebVideoDownloader").resolve()
     expected_parent = (root / "dist").resolve()
     if release.parent != expected_parent or not release.is_dir():
         raise RuntimeError("未找到项目内的构建目录。")

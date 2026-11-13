@@ -173,6 +173,10 @@ def _extract_url(text):
 
 
 def _site(url):
+    from site_registry import lookup
+    entry = lookup(url)
+    if entry:
+        return entry["name"]
     host = (urllib.parse.urlsplit(url).hostname or "").lower()
     def belongs(*domains):
         return any(host == domain or host.endswith("." + domain) for domain in domains)
@@ -485,13 +489,10 @@ def inspect_video(url: str, cookies: list[dict] | None = None, log=None, cancel:
         if site == "优酷":
             raise VideoError("优酷适配已暂时移除，当前不支持解析和下载优酷链接。")
         _say(log, f"正在解析{site}视频。")
-        if site == "AGE动漫":
-            from age_media import inspect_age
-            return inspect_age(canonical, cookies, log, cancel)
-        if site == "央视网":
-            return _inspect_cctv(canonical, cookies, log, cancel)
-        if site == "好看视频":
-            return _inspect_haokan(canonical, cookies, log, cancel)
+        from site_registry import lookup, resolve
+        entry = lookup(canonical)
+        if entry and entry.get('handler'):
+            return resolve(entry)(canonical, cookies, log, cancel)
         return _inspect_ytdlp(canonical, cookies, log, cancel)
     except VideoError:
         raise
@@ -837,6 +838,8 @@ def download_video(info: dict, format_id: str, output_dir: str, cookies: list[di
         _check_cancel(cancel)
         final = _publish(target, output, info.get("title"), cancel)
         result["path"] = str(final)
+        from site_registry import record_success
+        record_success(info.get("url", ""), info.get("site", "其他网站"))
         _progress(progress, 100, "下载完成")
         _say(log, "视频已通过完整性校验并保存。")
         return result

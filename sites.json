@@ -1,0 +1,52 @@
+[
+  {
+    "name": "央视网",
+    "domains": [
+      "cctv.com",
+      "cntv.cn",
+      "cctv.cn"
+    ],
+    "status": "下载已验证",
+    "handler": "engine:_inspect_cctv",
+    "adapted_at": "2026-11-13"
+  },
+  {
+    "name": "好看视频",
+    "domains": [
+      "haokan.baidu.com"
+    ],
+    "status": "下载已验证",
+    "handler": "engine:_inspect_haokan",
+    "adapted_at": "2026-11-13"
+  },
+  {
+    "name": "B站",
+    "domains": [
+      "bilibili.com",
+      "b23.tv",
+      "bili2233.cn"
+    ],
+    "status": "登录后下载已验证",
+    "handler": "engine:_inspect_ytdlp",
+    "adapted_at": "2026-11-13"
+  },
+  {
+    "name": "抖音",
+    "domains": [
+      "douyin.com",
+      "iesdouyin.com"
+    ],
+    "status": "视频及图文支持",
+    "handler": "engine:_inspect_ytdlp",
+    "adapted_at": "2026-11-13"
+  },
+  {
+    "name": "AGE动漫",
+    "domains": [
+      "agedm.io"
+    ],
+    "status": "单集完整下载已验证",
+    "handler": "age_media:inspect_age",
+    "adapted_at": "2026-11-13"
+  }
+]

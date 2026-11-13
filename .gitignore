@@ -12,3 +12,5 @@ tools/
 *.dpapi
 
 .playwright-cli/
+
+release/

@@ -30,6 +30,10 @@ def site_for_url(text: str) -> str:
         host = (urlsplit(match.group(0)).hostname or "").lower()
     except ValueError:
         return "其他网站"
+    from site_registry import lookup
+    entry = lookup(match.group(0))
+    if entry:
+        return entry["name"]
     sites = (("cctv.com", "央视网"), ("cntv.cn", "央视网"),
              ("haokan.baidu.com", "好看视频"), ("douyin.com", "抖音"),
              ("agedm.io", "AGE动漫"), ("bilibili.com", "B站"), ("b23.tv", "B站"), ("youku.com", "优酷"))
@@ -146,6 +150,10 @@ def gui(args: argparse.Namespace) -> int:
             self.account_button.setObjectName("sideButton")
             self.account_button.clicked.connect(self.show_accounts)
             left.addWidget(self.account_button)
+            update_button = QPushButton("检查更新")
+            update_button.setObjectName("sideButton")
+            update_button.clicked.connect(self.check_updates)
+            left.addWidget(update_button)
             left.addSpacing(26)
             supported = QPushButton("查看已适配列表")
             supported.setObjectName("sideButton")
@@ -321,16 +329,13 @@ def gui(args: argparse.Namespace) -> int:
             search = QLineEdit()
             search.setPlaceholderText("查询网站名称或域名")
             layout.addWidget(search)
-            table = QTableWidget(0, 3)
-            table.setHorizontalHeaderLabels(["网站", "域名", "验证情况"])
+            table = QTableWidget(0, 4)
+            table.setHorizontalHeaderLabels(["网站", "域名", "验证情况", "适配时间"])
             table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
             table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
             layout.addWidget(table)
-            rows = [("央视网", "tv.cctv.com", "下载已验证"),
-                    ("好看视频", "haokan.baidu.com", "下载已验证"),
-                    ("B站", "bilibili.com / b23.tv", "登录后下载已验证"),
-                    ("抖音", "douyin.com", "图文下载已验证"),
-                    ("AGE动漫", "agedm.io", "单集播放页适配")]
+            from site_registry import entries
+            rows = [(row['name'], ' / '.join(row['domains']), row['status'], row['adapted_at']) for row in entries()]
             controls = QHBoxLayout()
             previous, following = QPushButton("上一页"), QPushButton("下一页")
             page_label = QLabel()
@@ -360,6 +365,13 @@ def gui(args: argparse.Namespace) -> int:
             following.clicked.connect(lambda: turn(1))
             render()
             dialog.exec()
+
+        def check_updates(self):
+            if self.is_busy():
+                QMessageBox.information(self, "请先完成当前任务", "下载或解析结束后再安装更新。")
+                return
+            from updater import show_update_dialog
+            show_update_dialog(self)
 
         def show_accounts(self):
             if self.accounts_dialog is None:
@@ -573,7 +585,7 @@ def gui(args: argparse.Namespace) -> int:
             event.accept()
 
     app = QApplication(sys.argv[:1])
-    app.setApplicationName("WebVideoDownloaderPrototype")
+    app.setApplicationName("WebVideoDownloader")
     app.setOrganizationName("LocalTools")
     app.setFont(QFont("Microsoft YaHei UI", 10))
     app.setStyleSheet(STYLE)

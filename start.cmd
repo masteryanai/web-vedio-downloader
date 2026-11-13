@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
-if exist "dist\WebVideoDownloaderPrototype\WebVideoDownloaderPrototype.exe" (
-    start "" "dist\WebVideoDownloaderPrototype\WebVideoDownloaderPrototype.exe"
+if exist "dist\WebVideoDownloader\WebVideoDownloader.exe" (
+    start "" "dist\WebVideoDownloader\WebVideoDownloader.exe"
     exit /b
 )
 if exist ".venv\Scripts\pythonw.exe" (
