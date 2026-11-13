@@ -1,13 +1,18 @@
 """Interpret the current Douyin page's own post response and save its media."""
 import urllib.parse
+import re
 import zipfile
 from pathlib import Path
 
 
 def media_url(value):
+    if isinstance(value, str):
+        return value if urllib.parse.urlsplit(value).scheme in ('https', 'http') else None
     if not isinstance(value, dict):
         return None
-    for url in value.get('url_list', []):
+    if isinstance(value.get('url'), str):
+        return media_url(value['url'])
+    for url in value.get('url_list') or value.get('urlList') or []:
         if isinstance(url, str) and urllib.parse.urlsplit(url).scheme in ('https', 'http'):
             return url
     return None
@@ -15,6 +20,13 @@ def media_url(value):
 
 def post_info(post, url):
     from engine import VideoError
+    def normalize(value):
+        if isinstance(value, dict):
+            return {re.sub(r'(?<!^)(?=[A-Z])', '_', k).lower(): normalize(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [normalize(v) for v in value]
+        return value
+    post = normalize(post)
     title = post.get('desc') or '抖音作品'
     images = []
     for item in post.get('images') or (post.get('image_post_info') or {}).get('images') or []:
