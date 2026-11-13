@@ -882,7 +882,7 @@ def download_video(info, format_id, output_dir, cookies=None, progress=None, log
             raise VideoError('原任务的画质参数已变化，请取消此任务后重新下载。')
         if task.get('result'):
             result = task['result']
-            tasks.remove(task)
+            tasks.finish(task)
             return result
         task['state'] = 'running'; tasks.save(task)
         last_saved = [0.0]
@@ -901,7 +901,7 @@ def download_video(info, format_id, output_dir, cookies=None, progress=None, log
             tasks.save(task)
             raise
         try:
-            tasks.remove(task)
+            tasks.finish(task)
         except OSError:
-            _say(log, '下载已完成；缓存清理未完成，下次继续任务时将再次清理。')
+            _say(log, '下载已完成；历史或缓存整理未完成，完成记录仍保留在本机。')
         return result

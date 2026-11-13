@@ -1,0 +1,96 @@
+"""Run widget checks in a separate process so QCoreApplication tests stay isolated."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+
+class TaskViewTest(unittest.TestCase):
+    def test_task_window_filters_layout_and_id_actions(self):
+        env=dict(os.environ,QT_QPA_PLATFORM='offscreen')
+        result=subprocess.run([sys.executable,'-c',
+            "import runpy;runpy.run_path('tests/test_task_view.py',run_name='__main__')",'--gui-check'],
+            capture_output=True,text=True,encoding='utf-8',env=env,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+'\n'+result.stderr)
+
+
+def gui_check():
+    import json,time
+    from PySide6.QtWidgets import QApplication,QMessageBox,QStyleOptionViewItem
+    from PySide6.QtCore import Qt
+    import download_tasks as tasks
+    from download_queue import DownloadQueue
+    from task_view import TaskDialog
+    from PySide6.QtGui import QFont
+    from main import STYLE
+    app=QApplication([]);app.setFont(QFont('Microsoft YaHei UI',10));app.setStyleSheet(STYLE)
+    def settle():
+        for _ in range(4):app.processEvents();time.sleep(.01)
+    with tempfile.TemporaryDirectory() as folder:
+        root=Path(folder);registry=root/'tasks';registry.mkdir()
+        with patch('download_tasks.directory',return_value=registry):
+            created=[];outputs=[]
+            for name,state in [('长标题测试'*30+'\n第二行','paused'),('pending-failed','failed'),('queued','queued'),('checking-100','running'),('completed-one','completed'),('completed-two','completed'),('cancelled','cancelled')]:
+                info={'url':'https://example.com/'+str(len(created)),'site':'AGE动漫','title':name,'formats':[{'id':'source'}]}
+                output=str(root/'short') if created else str(root/('保存位置'*20)/('长路径'*20))
+                task=tasks.create(info,'source',output);task['state']=state;task['download_percent']=100 if state in ('running','completed') else 42
+                if state=='completed':
+                    video=root/(name+'.mp4');video.write_bytes(b'user file');outputs.append(video)
+                    task['result']={'path':str(video),'verified':True};tasks.save(task);tasks.finish(task)
+                elif state=='cancelled':
+                    task['state']='paused';tasks.save(task);tasks.discard(task['id'])
+                else:tasks.save(task)
+                created.append(task)
+            tasks.history_file('d'*32).write_text('{broken')
+            queue=DownloadQueue();dialog=TaskDialog(queue,lambda _:None);dialog.show();settle()
+            assert dialog.table.rowCount()==7
+            assert not dialog.table.wordWrap() and dialog.table.rowHeight(0)==32
+            option=QStyleOptionViewItem()
+            dialog.table.itemDelegateForColumn(0).initStyleOption(option,dialog.table.model().index(0,0))
+            assert option.textElideMode==Qt.TextElideMode.ElideRight
+            assert '\n' not in dialog.table.item(0,0).text()
+            assert dialog.table.item(0,0).toolTip()==created[0]['title']
+            assert dialog.table.horizontalScrollBar().maximum()>0
+            screenshot=os.environ.get('TASK_VIEW_SCREENSHOT')
+            if screenshot:dialog.grab().save(screenshot)
+            dialog.tabs.setCurrentIndex(1);assert dialog.table.rowCount()==4
+            assert created[3]['id'] in dialog.visible # 100% while verifying is still ongoing.
+            dialog.tabs.setCurrentIndex(2);assert dialog.table.rowCount()==2
+            dialog.tabs.setCurrentIndex(3);assert dialog.table.rowCount()==1
+            dialog.tabs.setCurrentIndex(0)
+            dialog.search.setText('AGE动漫');assert dialog.table.rowCount()==7
+            dialog.search.setText('保存位置');assert dialog.table.rowCount()==1
+            dialog.table.selectRow(0)
+            def change_filter_during_confirmation(*_):
+                dialog.search.setText('pending-failed');dialog.refresh()
+                return QMessageBox.StandardButton.Yes
+            with patch.object(QMessageBox,'question',side_effect=change_filter_during_confirmation):dialog.cancel()
+            assert tasks.load_record(created[0]['id'])['state']=='cancelled'
+            assert tasks.load(created[1]['id'])['state']=='failed'
+            dialog.search.setText('completed-one');settle();dialog.table.selectRow(0)
+            assert dialog.buttons['delete'].isEnabled() and not dialog.buttons['resume'].isEnabled()
+            selected=dialog.selected()['id'];dialog.refresh()
+            assert dialog.selected()['id']==selected and dialog.search.text()=='completed-one'
+            before=dialog.table.columnWidth(0);dialog.resize(1800,600);settle()
+            assert dialog.table.columnWidth(0)>before
+            assert abs(dialog.table.horizontalHeader().length()-dialog.table.viewport().width())<=1
+            if screenshot:dialog.grab().save(str(Path(screenshot).with_stem(Path(screenshot).stem+'-wide')))
+            def select_other(*_):
+                dialog.search.setText('completed-two');dialog.refresh();dialog.table.selectRow(0)
+                return QMessageBox.StandardButton.Yes
+            with patch.object(QMessageBox,'question',side_effect=select_other):dialog.delete()
+            assert not tasks.history_file(selected).exists()
+            assert tasks.load_record(created[5]['id'])['state']=='completed'
+            assert all(video.read_bytes()==b'user file' for video in outputs)
+            # Re-read physical records in a fresh interpreter.
+            code="import json,sys;from pathlib import Path;import download_tasks as t;t.directory=lambda:Path(sys.argv[1]);r=t.records();print(json.dumps([sum(x['state'] in ('queued','running','paused','failed') for x in r),sum(x['state']=='completed' for x in r),sum(x['state']=='cancelled' for x in r)]))"
+            counts=json.loads(subprocess.check_output([sys.executable,'-c',code,str(registry)],text=True,encoding='utf-8'))
+            assert counts==[3,1,2],counts
+            dialog.close();settle()
+    print('Task dialog layout/search/grouping/ID actions/history restart: PASS')
+
+
+if __name__=='__main__' and '--gui-check' in sys.argv:gui_check()

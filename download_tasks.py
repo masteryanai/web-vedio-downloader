@@ -7,6 +7,8 @@ import re
 import shutil
 import time
 import uuid
+import copy
+import math
 from runtime import app_data_dir
 
 
@@ -29,26 +31,102 @@ def save(task):
     temporary.replace(target)
 
 
-def load(task_id):
-    task = json.loads(task_file(task_id).read_text(encoding='utf-8'))
+TERMINAL = {'completed', 'cancelled'}
+_record_cache = {}
+
+
+def history_file(task_id):
+    name = task_file(task_id).name
+    folder = directory() / 'history'
+    folder.mkdir(exist_ok=True)
+    return folder / name
+
+
+def read_record(path, task_id):
+    task = json.loads(path.read_text(encoding='utf-8'))
     fields = ('id', 'url', 'site', 'title', 'format_id', 'output', 'state')
     if not isinstance(task, dict) or any(not isinstance(task.get(key), str) for key in fields):
         raise ValueError('下载任务信息不完整。')
     if task['id'] != task_id:
         raise ValueError('下载任务信息不一致。')
+    if task['state'] not in {'queued','running','paused','failed','completed','cancelled'}:
+        raise ValueError('下载任务状态无效。')
+    created=task.get('created_at',0)
+    if type(created) not in (int,float) or not math.isfinite(created):
+        task['created_at'] = 0
+    percent=task.get('download_percent')
+    if type(percent) not in (int,float) or not math.isfinite(percent) or not 0<=percent<=100:
+        task['download_percent']=None
+    if not isinstance(task.get('stage',''),str):task['stage']=''
     return task
 
 
+def load(task_id):
+    return read_record(task_file(task_id), task_id)
+
+
+def load_record(task_id):
+    return load(task_id) if task_file(task_id).exists() else read_record(history_file(task_id),task_id)
+
+
+def records():
+    rows = {}
+    seen = set()
+    # A terminal checkpoint in the active directory wins over an older archive.
+    for folder in (directory()/'history', directory()):
+        for file in folder.glob('*.json'):
+            try:
+                task_file(file.stem)
+                stat = file.stat(); fingerprint = (stat.st_mtime_ns,stat.st_size)
+                seen.add(file)
+                cached = _record_cache.get(file)
+                if cached and cached[0] == fingerprint:
+                    task = copy.deepcopy(cached[1])
+                else:
+                    task = read_record(file,file.stem)
+                    _record_cache[file] = (fingerprint,copy.deepcopy(task))
+                if folder.name == 'history' and task['state'] not in TERMINAL:
+                    continue
+                if task['state'] not in TERMINAL:
+                    work_path(task)
+                rows[task['id']] = task
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    for file in list(_record_cache):
+        if file not in seen: _record_cache.pop(file,None)
+    return list(rows.values())
+
+
 def pending():
-    rows = []
-    for file in directory().glob('*.json'):
-        try:
-            task = load(file.stem)
-            work_path(task)
-            rows.append(task)
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return rows
+    return [task for task in records() if task['state'] not in TERMINAL]
+
+
+def archive(task):
+    if task['state'] not in TERMINAL:
+        raise ValueError('只能归档已完成或已取消的任务。')
+    task.setdefault('finished_at',time.time())
+    if task['state']=='completed':
+        task.update(stage='已完成',download_percent=100)
+    fields = ('id','url','site','title','format_id','format','output','state','stage',
+              'created_at','finished_at','download_percent','result')
+    public = {key:task[key] for key in fields if key in task}
+    target = history_file(task['id']); temporary = target.with_suffix('.tmp')
+    temporary.write_text(json.dumps(public,ensure_ascii=False,indent=2),encoding='utf-8')
+    temporary.replace(target)
+
+
+def finish(task):
+    archive(task)
+    remove(task)
+
+
+def delete_history(task_id):
+    with lock(task_id):
+        task = load_record(task_id)
+        if task['state'] not in TERMINAL:
+            raise ValueError('未完成任务请先取消，不能直接删除历史记录。')
+        history_file(task_id).unlink(missing_ok=True)
+        task_file(task_id).unlink(missing_ok=True)
 
 
 def create(info, format_id, output):
@@ -106,4 +184,16 @@ def remove(task):
 
 def discard(task_id):
     with lock(task_id):
-        remove(load(task_id))
+        task = load(task_id)
+        if task['state'] == 'completed':
+            finish(task)
+            return task
+        # Commit cancellation only after the worker has stopped and cache removal succeeds.
+        path = work_path(task)
+        if path.exists(): shutil.rmtree(path)
+        task.update(state='cancelled',stage='已取消')
+        task.pop('result',None)
+        save(task)
+        archive(task)
+        task_file(task_id).unlink(missing_ok=True)
+        return task

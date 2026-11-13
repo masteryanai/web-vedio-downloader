@@ -25,6 +25,8 @@ class Job(QObject):
         try:
             with tasks.lock(task_id):
                 task = tasks.load(task_id)
+                if task['state'] in tasks.TERMINAL:
+                    raise ValueError('历史任务不能直接继续。')
                 task['state'] = 'running'; task['stage'] = '准备媒体地址'; tasks.save(task)
                 try:
                     engine._check_cancel(self.cancel)
@@ -50,8 +52,9 @@ class Job(QObject):
                 except Exception:
                     if tasks.task_file(task_id).exists():
                         latest = tasks.load(task_id)
-                        latest['state'] = 'paused' if self.cancel.is_set() else 'failed'
-                        tasks.save(latest)
+                        if latest['state'] not in tasks.TERMINAL:
+                            latest['state'] = 'paused' if self.cancel.is_set() else 'failed'
+                            tasks.save(latest)
                     raise
         except Exception as error:
             self.result.emit(task_id, None, str(error))
@@ -89,6 +92,7 @@ class DownloadQueue(QObject):
             return False
         with tasks.lock(task_id):
             task = tasks.load(task_id)
+            if task['state'] in tasks.TERMINAL: return False
             task['state'] = 'queued'; tasks.save(task)
         if info is not None:
             self.payloads[task_id] = (copy.deepcopy(info), time.monotonic())
@@ -167,7 +171,9 @@ class DownloadQueue(QObject):
         else:
             self.waiting = deque(row for row in self.waiting if row[0] != task_id)
             with tasks.lock(task_id):
-                task = tasks.load(task_id); task['state'] = 'paused'; tasks.save(task)
+                task = tasks.load(task_id)
+                if task['state'] in tasks.TERMINAL: return
+                task['state'] = 'paused'; tasks.save(task)
             self.pump()
         self.changed.emit()
 
@@ -176,19 +182,29 @@ class DownloadQueue(QObject):
             self.deleting.add(task_id); self.pause(task_id); return
         self.waiting = deque(row for row in self.waiting if row[0] != task_id)
         try:
-            if tasks.task_file(task_id).exists(): tasks.discard(task_id)
-            self.completed_rows.pop(task_id, None); self.snapshots.pop(task_id,None); self.payloads.pop(task_id,None)
-            self.entries.pop(task_id, None)
-            self.removed.emit(task_id)
+            record=tasks.load_record(task_id)
+            if record['state'] in tasks.TERMINAL:
+                self.message.emit(task_id,'任务已经结束，文件和历史记录已保留。')
+            else:
+                tasks.discard(task_id)
+                self.snapshots.pop(task_id,None);self.payloads.pop(task_id,None);self.entries.pop(task_id,None)
+                self.removed.emit(task_id)
         except Exception as error:
             self.failed.emit(task_id, '缓存删除失败：'+str(error))
         self.pump()
 
+    def delete_record(self,task_id):
+        if task_id in self.active or any(row[0]==task_id for row in self.waiting):
+            raise ValueError('任务仍在运行或排队，不能删除记录。')
+        tasks.delete_history(task_id)
+        self.completed_rows.pop(task_id,None);self.snapshots.pop(task_id,None)
+        self.entries.pop(task_id,None);self.payloads.pop(task_id,None)
+        self.changed.emit()
+
     def rows(self):
-        result = {row['id']:row for row in tasks.pending()}
-        result.update(copy.deepcopy(self.completed_rows))
+        result = {row['id']:row for row in tasks.records()}
         for task_id, row in result.items():
-            if row['state'] != 'completed':
+            if row['state'] not in tasks.TERMINAL:
                 row.update(self.snapshots.get(task_id, {}))
         return sorted(result.values(), key=lambda row:(row.get('created_at',0),row['id']))
 

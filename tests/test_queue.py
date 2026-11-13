@@ -57,6 +57,7 @@ class QueueTests(unittest.TestCase):
                     self.wait(lambda:len(started)==11)
                     queue.discard(ids[9])
                     self.wait(lambda:not tasks.task_file(ids[9]).exists())
+                    self.assertEqual(tasks.load_record(ids[9])['state'],'cancelled')
                     queue.shutdown();self.wait(lambda:not queue.active)
                     self.assertFalse(queue.waiting)
                     for task in tasks.pending():self.assertNotEqual(task['state'],'running')
@@ -72,3 +73,15 @@ class QueueTests(unittest.TestCase):
                 with self.assertRaises(ValueError):preferences.save_limit(value)
             (Path(folder)/'settings.json').write_text('{bad')
             self.assertEqual(preferences.parallel_limit(),5)
+
+    def test_completion_wins_if_cancel_arrives_after_publication(self):
+        with tempfile.TemporaryDirectory() as folder,patch('download_tasks.directory',return_value=Path(folder)):
+            root=Path(folder);video=root/'finished.mp4';video.write_bytes(b'complete')
+            info={'url':'https://example.com/1','site':'test','title':'title','formats':[{'id':'best'}]}
+            task=tasks.create(info,'best',folder);queue=DownloadQueue()
+            queue.completed.connect(lambda task_id,result:queue.discard(task_id))
+            with patch('engine._perform_download',return_value={'path':str(video),'verified':True}):
+                queue.enqueue(task['id'],[],info)
+                self.wait(lambda:task['id'] in queue.completed_rows and not queue.active)
+            self.assertEqual(tasks.load_record(task['id'])['state'],'completed')
+            self.assertEqual(video.read_bytes(),b'complete')
