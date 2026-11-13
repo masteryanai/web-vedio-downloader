@@ -10,3 +10,5 @@ tools/
 *.cookies
 *.cookie
 *.dpapi
+
+.playwright-cli/
