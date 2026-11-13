@@ -329,8 +329,7 @@ def gui(args: argparse.Namespace) -> int:
             rows = [("央视网", "tv.cctv.com", "下载已验证"),
                     ("好看视频", "haokan.baidu.com", "下载已验证"),
                     ("B站", "bilibili.com / b23.tv", "登录后下载已验证"),
-                    ("抖音", "douyin.com", "已接入，下载待验证"),
-                    ("优酷", "youku.com", "已接入，下载待验证")]
+                    ("抖音", "douyin.com", "图文下载已验证")]
             controls = QHBoxLayout()
             previous, following = QPushButton("上一页"), QPushButton("下一页")
             page_label = QLabel()

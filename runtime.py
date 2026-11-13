@@ -7,8 +7,8 @@ import shutil
 import sys
 
 APP_NAME = "Web Video Downloader"
-APP_VERSION = "0.1.3"
-SITES = ("央视网", "好看视频", "抖音", "B站", "优酷")
+APP_VERSION = "0.1.4"
+SITES = ("央视网", "好看视频", "抖音", "B站")
 
 
 def resource_path(*parts: str) -> Path:

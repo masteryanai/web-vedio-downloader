@@ -28,20 +28,18 @@ from PySide6.QtWidgets import (
 import shiboken6
 
 
-SITES = ("央视网", "好看视频", "抖音", "B站", "优酷")
+SITES = ("央视网", "好看视频", "抖音", "B站")
 LOGIN_URLS = {
     "央视网": "https://tv.cctv.com/",
     "好看视频": "https://haokan.baidu.com/",
     "抖音": "https://www.douyin.com/",
     "B站": "https://passport.bilibili.com/login",
-    "优酷": "https://www.youku.com/",
 }
 _COOKIE_DOMAINS = {
     "央视网": ("cctv.com", "cntv.cn", "cctv.cn"),
     "好看视频": ("baidu.com",),
     "抖音": ("douyin.com", "iesdouyin.com", "amemv.com"),
     "B站": ("bilibili.com", "biligame.com"),
-    "优酷": ("youku.com", "tudou.com"),
 }
 _EMPTY_STATUS = "未登录"
 _IMPORTED_STATUS = "会话已导入，权限待验证"

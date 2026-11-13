@@ -480,6 +480,8 @@ def inspect_video(url: str, cookies: list[dict] | None = None, log=None, cancel:
         _check_cancel(cancel)
         canonical = _normalize_url(url, cookies, cancel)
         site = _site(canonical)
+        if site == "优酷":
+            raise VideoError("优酷适配已暂时移除，当前不支持解析和下载优酷链接。")
         _say(log, f"正在解析{site}视频。")
         if site == "央视网":
             return _inspect_cctv(canonical, cookies, log, cancel)
