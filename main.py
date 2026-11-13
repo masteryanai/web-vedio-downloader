@@ -86,6 +86,7 @@ def gui(args: argparse.Namespace) -> int:
     )
     from accounts import AccountManager, AccountsDialog
     from engine import inspect_video, download_video
+    import download_tasks as tasks
 
     class Worker(QObject):
         succeeded = Signal(object)
@@ -118,6 +119,10 @@ def gui(args: argparse.Namespace) -> int:
             self.worker = None
             self.cancel_event = threading.Event()
             self.close_when_idle = False
+            self.current_task_id = None
+            self.resume_task_id = None
+            self.resume_after_inspect = False
+            self.delete_when_idle = False
             self.task_kind = ""
             self.last_result = None
             self.browser_dialog = None
@@ -126,6 +131,9 @@ def gui(args: argparse.Namespace) -> int:
             self.accounts.changed.connect(self.account_changed)
             self.accounts_dialog = None
             self._build()
+            unfinished = tasks.pending()
+            if unfinished:
+                self.status_text.setText(f"有 {len(unfinished)} 个未完成任务，可在“下载任务”中继续")
 
         def _build(self):
             shell = QWidget()
@@ -154,6 +162,10 @@ def gui(args: argparse.Namespace) -> int:
             update_button.setObjectName("sideButton")
             update_button.clicked.connect(self.check_updates)
             left.addWidget(update_button)
+            task_button = QPushButton("下载任务")
+            task_button.setObjectName("sideButton")
+            task_button.clicked.connect(self.show_tasks)
+            left.addWidget(task_button)
             left.addSpacing(26)
             supported = QPushButton("查看已适配列表")
             supported.setObjectName("sideButton")
@@ -165,7 +177,7 @@ def gui(args: argparse.Namespace) -> int:
             note.setWordWrap(True)
             left.addWidget(note)
             left.addSpacing(14)
-            left.addWidget(QLabel("v0.1.0", objectName="sideMuted"))
+            left.addWidget(QLabel(f"v{APP_VERSION}", objectName="sideMuted"))
             outer.addWidget(sidebar)
 
             content = QWidget()
@@ -258,6 +270,10 @@ def gui(args: argparse.Namespace) -> int:
             self.cancel_button.setEnabled(False)
             self.cancel_button.clicked.connect(self.cancel)
             row.addWidget(self.cancel_button)
+            self.delete_button = QPushButton("取消并删除")
+            self.delete_button.clicked.connect(self.cancel_and_delete)
+            self.delete_button.setEnabled(False)
+            row.addWidget(self.delete_button)
             self.open_button = QPushButton("打开下载文件夹")
             self.open_button.clicked.connect(self.open_folder)
             row.addWidget(self.open_button)
@@ -293,9 +309,14 @@ def gui(args: argparse.Namespace) -> int:
             self.url_input.setReadOnly(busy)
             self.paste_button.setEnabled(not busy)
             self.path_button.setEnabled(not busy)
-            self.cancel_button.setEnabled(busy and not self.cancel_event.is_set())
+            recoverable = bool(self.current_task_id and tasks.task_file(self.current_task_id).exists())
+            self.cancel_button.setText(("暂停" if self.task_kind == "download" else "取消解析") if busy else "继续")
+            self.cancel_button.setEnabled((busy and not self.cancel_event.is_set()) or (not busy and recoverable))
+            self.delete_button.setEnabled(busy and self.task_kind == 'download' and not self.cancel_event.is_set())
 
         def url_changed(self):
+            self.resume_task_id = None
+            self.resume_after_inspect = False
             self.info = None
             self.quality.clear()
             self.quality.addItem("请先解析视频")
@@ -320,6 +341,60 @@ def gui(args: argparse.Namespace) -> int:
             folder = Path(self.output_path.text())
             folder.mkdir(parents=True, exist_ok=True)
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+        def show_tasks(self):
+            dialog = QDialog(self); dialog.setWindowTitle('未完成下载任务'); dialog.resize(900, 420)
+            layout = QVBoxLayout(dialog)
+            layout.addWidget(QLabel('暂停和关闭软件会保留进度；继续前将重新解析链接，必要时请先登录。'))
+            table = QTableWidget(0, 4); table.setHorizontalHeaderLabels(['作品', '网站', '状态', '保存位置'])
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            from PySide6.QtWidgets import QAbstractItemView
+            table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            layout.addWidget(table)
+            rows = []
+            def refresh():
+                rows[:] = tasks.pending(); table.setRowCount(len(rows))
+                for i, task in enumerate(rows):
+                    state = {'running':'下载中或上次中断', 'paused':'已暂停', 'failed':'未完成', 'completed':'待清理'}.get(task['state'], '未完成')
+                    for j, value in enumerate((task['title'], task['site'], state, task['output'])):
+                        table.setItem(i, j, QTableWidgetItem(value))
+            def chosen():
+                i = table.currentRow()
+                return rows[i] if 0 <= i < len(rows) else None
+            def resume():
+                task = chosen()
+                if task and not self.is_busy():
+                    dialog.accept(); self.resume_task(task['id'])
+            def discard():
+                task = chosen()
+                if not task: return
+                if self.is_busy() and task['id'] == self.current_task_id:
+                    QMessageBox.information(dialog, '任务正在下载', '请先暂停此任务，再删除。'); return
+                if QMessageBox.question(dialog, '取消并删除', '删除此任务及未完成缓存？已完成的下载文件会保留。') != QMessageBox.StandardButton.Yes:
+                    return
+                try: tasks.discard(task['id'])
+                except Exception as error: QMessageBox.warning(dialog, '未能删除任务', str(error))
+                refresh(); self.refresh_buttons()
+            row = QHBoxLayout()
+            button = QPushButton('继续所选任务'); button.setEnabled(not self.is_busy()); button.clicked.connect(resume); row.addWidget(button)
+            button = QPushButton('取消并删除'); button.clicked.connect(discard); row.addWidget(button)
+            button = QPushButton('刷新'); button.clicked.connect(refresh); row.addWidget(button)
+            layout.addLayout(row); refresh(); dialog.exec()
+
+        def resume_task(self, task_id):
+            if self.is_busy(): return
+            try:
+                task = tasks.load(task_id)
+                with tasks.lock(task_id): pass
+            except Exception as error:
+                QMessageBox.warning(self, '无法恢复任务', str(error)); return
+            self.url_input.setPlainText(task['url'])
+            self.output_path.setText(task['output'])
+            self.resume_task_id = task_id; self.current_task_id = task_id
+            self.resume_after_inspect = True
+            self.inspect()
 
         def show_supported(self):
             dialog = QDialog(self)
@@ -456,7 +531,7 @@ def gui(args: argparse.Namespace) -> int:
                 self.task_success(self.browser_result)
                 self.task_kind = ""
                 self.refresh_buttons()
-                if self.info.get("_kind") == "images":
+                if self.info.get("_kind") == "images" and not self.resume_after_inspect:
                     choice = QMessageBox(self)
                     choice.setWindowTitle("选择图文保存方式")
                     choice.setText(f"检测到 {len(self.info['_images'])} 张图片，请选择保存方式。")
@@ -472,6 +547,9 @@ def gui(args: argparse.Namespace) -> int:
                 self.refresh_buttons()
             if self.close_when_idle:
                 self.close()
+            elif self.resume_after_inspect and self.info:
+                self.resume_after_inspect = False
+                QTimer.singleShot(0, self.download)
 
         def download(self):
             if not self.info:
@@ -480,13 +558,23 @@ def gui(args: argparse.Namespace) -> int:
             selected = self.quality.currentData()
             cookies = self.accounts.cookies_for(info["site"]) if info["site"] in SITES else []
             folder = self.output_path.text()
+            if self.resume_task_id:
+                task = tasks.load(self.resume_task_id)
+                if selected != task['format_id']:
+                    QMessageBox.warning(self, '画质已变化', '原任务画质已不可用，请保留任务稍后重试，或取消后新建下载。'); return
+                folder = task['output']
+            else:
+                task = tasks.create(info, selected, folder)
+            self.current_task_id = task['id']
+            self.resume_task_id = None
+            self.delete_when_idle = False
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(0)
             self.state_badge.setText("下载中")
             self.status_text.setText("准备下载")
             self.detail.setText("先保存临时文件，检查通过后再生成成品。")
             self.start_task("download", lambda worker: download_video(
-                info, selected, folder, cookies, worker.progress.emit, worker.log.emit, self.cancel_event))
+                info, selected, folder, cookies, worker.progress.emit, worker.log.emit, self.cancel_event, task_id=task["id"]))
 
         @Slot(object)
         def task_success(self, result):
@@ -500,6 +588,13 @@ def gui(args: argparse.Namespace) -> int:
                 self.quality.clear()
                 for option in result["formats"]:
                     self.quality.addItem(option["label"], option["id"])
+                if self.resume_task_id:
+                    selected_id = tasks.load(self.resume_task_id)['format_id']
+                    index = self.quality.findData(selected_id)
+                    if index < 0:
+                        self.resume_after_inspect = False
+                        self.append_log('原任务的画质暂不可用，进度已保留；请稍后从下载任务重试。')
+                    self.quality.setCurrentIndex(index)
                 self.status_text.setText("解析完成，选择画质后下载")
                 self.detail.setText("列表来自网站当前返回的视频流；账号权限以实际结果为准。")
                 self.state_badge.setText("可下载")
@@ -518,25 +613,39 @@ def gui(args: argparse.Namespace) -> int:
         @Slot(str)
         def task_failure(self, message):
             self.progress_bar.setRange(0, 100)
-            self.progress_bar.setValue(0)
             cancelled = self.cancel_event.is_set()
+            if not (cancelled and self.task_kind == 'download'):
+                self.progress_bar.setValue(0)
+            elif not self.delete_when_idle:
+                message = '已暂停并保留下载进度；可点击继续，或下次从下载任务恢复。'
             self.state_badge.setText("已停止" if cancelled else "需要处理")
-            self.status_text.setText("任务已停止" if cancelled else "本次任务未完成")
+            self.status_text.setText(("正在取消并删除" if self.delete_when_idle else "已暂停，进度已保留") if cancelled and self.task_kind == "download" else ("解析已取消" if cancelled else "本次任务未完成，下载进度会保留"))
             self.detail.setText(message[:450])
             self.append_log(message)
             if self.task_kind == "inspect":
+                self.resume_after_inspect = False
                 self.info = None
                 self.video_title.setText("未取得可下载的视频信息")
                 self.video_meta.setText("可先在“账号与扫码登录”中完成官方验证，再重新解析。")
 
         @Slot()
         def thread_finished(self):
+            if self.delete_when_idle and self.current_task_id:
+                try:
+                    if tasks.task_file(self.current_task_id).exists(): tasks.discard(self.current_task_id)
+                    self.status_text.setText('已取消并删除未完成缓存')
+                except Exception as error:
+                    self.append_log('清理未完成，可从下载任务重试：'+str(error))
+                self.delete_when_idle = False
             self.active_thread = None
             self.worker = None
             self.task_kind = ""
             self.refresh_buttons()
             if self.close_when_idle:
                 self.close()
+            elif self.resume_after_inspect and self.info:
+                self.resume_after_inspect = False
+                QTimer.singleShot(0, self.download)
 
         @Slot(object)
         def update_progress(self, data):
@@ -566,7 +675,15 @@ def gui(args: argparse.Namespace) -> int:
             clean = re.sub(r"(?i)(cookie|authorization|access_token|auth_key|sessdata)\s*[:=]\s*\S+", r"\1=[已隐藏]", clean)
             self.log_box.appendPlainText(clean)
 
+        def cancel_and_delete(self):
+            if self.task_kind != 'download': return
+            self.delete_when_idle = True
+            self.cancel()
+
         def cancel(self):
+            if not self.is_busy():
+                if self.current_task_id: self.resume_task(self.current_task_id)
+                return
             self.cancel_event.set()
             if self.browser_dialog is not None:
                 self.browser_dialog.reject()

@@ -616,45 +616,20 @@ def _verify(path, info, selected, progress, cancel):
 def _remux(source, target, progress, cancel):
     _progress(progress, 83, "无损封装为 MP4")
     _run_process([
-        _tool("ffmpeg"), "-hide_banner", "-v", "error", "-n", "-i", str(source),
+        _tool("ffmpeg"), "-hide_banner", "-v", "error", "-y", "-i", str(source),
         "-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart", str(target),
     ], cancel=cancel, label="MP4 无损封装")
 
 
 def _download_http(url, path, *, cookies, referer, progress, cancel):
-    headers = {"User-Agent": IPHONE_UA, "Referer": referer, "Accept": "*/*"}
-    opener = _opener(cookies, urllib.parse.urlsplit(url).hostname or "")
-    for attempt in range(3):
-        _check_cancel(cancel)
-        try:
-            with opener.open(urllib.request.Request(url, headers=headers), timeout=15) as response, open(path, "wb") as output:
-                expected = int(_number(response.headers.get("Content-Length")))
-                count, started, last_report = 0, time.monotonic(), 0
-                while True:
-                    _check_cancel(cancel)
-                    chunk = response.read(256 * 1024)
-                    if not chunk:
-                        break
-                    output.write(chunk)
-                    count += len(chunk)
-                    now = time.monotonic()
-                    if now - last_report >= 0.15:
-                        speed = count / max(0.01, now - started)
-                        _progress(progress, 80 * count / expected if expected else 0, "下载中", speed, (expected - count) / speed if expected and speed else None)
-                        last_report = now
-                if not count or (expected and count != expected):
-                    raise OSError("incomplete response")
-            return
-        except DownloadCancelled:
-            raise
-        except urllib.error.HTTPError as exc:
-            if exc.code in (401, 403, 412):
-                raise VideoError("媒体地址已过期或需要访问验证，请重新解析后重试。") from None
-            if attempt == 2:
-                raise VideoError(f"下载服务器返回 HTTP {exc.code}，请稍后重试。") from None
-        except (OSError, urllib.error.URLError, TimeoutError):
-            if attempt == 2:
-                raise VideoError("视频下载中断或文件未完整传输，请检查网络后重试。") from None
+    from http_resume import download
+    try:
+        download(url, path, opener=_opener(cookies, urllib.parse.urlsplit(url).hostname or ""),
+                 headers={"User-Agent": IPHONE_UA, "Referer": referer, "Accept": "*/*"},
+                 check=lambda: _check_cancel(cancel),
+                 report=lambda percent, stage, speed, eta: _progress(progress, percent, stage, speed, eta))
+    except ValueError as error:
+        raise VideoError(str(error)) from None
 
 
 def _download_cctv(info, selected, work, cookies, progress, log, cancel):
@@ -670,26 +645,56 @@ def _download_cctv(info, selected, work, cookies, progress, log, cancel):
         if not script.is_file():
             raise VideoError("央视高清处理组件缺失，请重新安装本工具。")
 
-        playlist, _ = _text(current["_media_url"], cookies=cookies, referer=info["url"], cancel=cancel)
-        segment_count = sum(1 for line in playlist.splitlines() if line.strip() and not line.lstrip().startswith("#"))
+        playlist, playlist_url = _text(current["_media_url"], cookies=cookies, referer=info["url"], cancel=cancel)
+        lines = [line.strip() for line in playlist.splitlines() if line.strip()]
+        if any(line.startswith(('#EXT-X-KEY:', '#EXT-X-MAP:', '#EXT-X-BYTERANGE:')) for line in lines):
+            raise VideoError('当前央视分片格式尚不支持安全续传，已保留任务。')
+        urls = [urllib.parse.urljoin(playlist_url, line) for line in lines if not line.startswith('#')]
+        import hashlib
+        identity = [[urllib.parse.urlsplit(url).path for url in urls],
+                    [line for line in lines if line.startswith(('#EXTINF:', '#EXT-X-MEDIA-SEQUENCE:'))]]
+        signature = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+        marker = work / 'playlist-id.txt'
+        if marker.exists() and marker.read_text() != signature:
+            raise VideoError('央视分片列表发生变化，请取消此任务后重新下载，避免拼接不同内容。')
+        marker.write_text(signature)
+        segment_count = len(urls)
+        local = []
+        for index, url in enumerate(urls):
+            _check_cancel(cancel)
+            piece = work / f'slice-{index:06d}.ts'
+            _download_http(url, piece, cookies=cookies, referer=info['url'], progress=None, cancel=cancel)
+            local.append(piece.name)
+            _progress(progress, 75*(index+1)/max(1, segment_count), f'央视分片 {index+1}/{segment_count}')
+        local_playlist = work / 'local.m3u8'
+        local_playlist.write_text('#EXTM3U\n'+'\n'.join(local)+'\n', encoding='utf-8', newline='\n')
 
         def node_line(line):
             # CLI progress varies by version. Only relay the safe counter to the UI.
             match = re.search(r"decrypting slice\s+(\d+)", line, re.I)
             if match and segment_count:
-                _progress(progress, min(80, (int(match.group(1)) + 1) / segment_count * 80), "下载并处理央视高清")
+                _progress(progress, 75 + min(5, (int(match.group(1)) + 1) / segment_count * 5), "处理已下载的央视分片")
             if "error" in line.lower() or "错误" in line:
                 _say(log, "央视高清处理组件报告错误；将检查处理结果。")
 
         _say(log, "正在获取央视原始高清流并进行专用媒体处理。")
         _run_process([
-            _tool("node"), str(script), "--get-m3u8", current["_media_url"], str(source),
+            _tool("node"), str(script), "--local-m3u8", str(local_playlist), str(source),
         ], cwd=script.parents[3], cancel=cancel, on_line=node_line, label="央视高清下载处理")
     else:
-        _run_process([
-            _tool("ffmpeg"), "-hide_banner", "-v", "error", "-n", "-xerror",
-            "-i", current["_media_url"], "-c", "copy", str(source),
-        ], cancel=cancel, label="央视视频下载")
+        yt_dlp = _ytdlp_module()
+        options = _yt_options(_YtdlpLogger(log, cookies), cancel)
+        def native_progress(status):
+            _check_cancel(cancel)
+            total = status.get('total_bytes') or status.get('total_bytes_estimate') or 0
+            count = status.get('downloaded_bytes') or 0
+            _progress(progress, min(80, count / total * 80) if total else 0, '下载央视视频', status.get('speed'), status.get('eta'))
+        options.update({'outtmpl':str(work/'cctv.%(ext)s'), 'hls_prefer_native':True,
+                        'progress_hooks':[native_progress],
+                        'ffmpeg_location':str(Path(_tool('ffmpeg')).parent)})
+        with yt_dlp.YoutubeDL(options) as ydl:
+            raw = ydl.extract_info(current['_media_url'], download=True)
+            source = Path(ydl.prepare_filename(raw))
     _remux(source, target, progress, cancel)
     return target
 
@@ -748,8 +753,8 @@ def _download_ytdlp(info, selected, work, cookies, progress, log, cancel):
         raise _ytdlp_error(exc, info["site"]) from None
     if logger.preview:
         raise VideoError("网站只提供了试看内容，已停止生成完整视频成品。")
-    candidates = [Path(p) for p in final_paths if Path(p).is_file() and Path(p).resolve().is_relative_to(work.resolve())]
-    candidates += [p for p in work.iterdir() if p.is_file() and p.suffix.lower() in (".mp4", ".mkv", ".webm", ".flv", ".ts")]
+    candidates = [Path(p) for p in final_paths if Path(p).name != "result.mp4" and Path(p).is_file() and Path(p).resolve().is_relative_to(work.resolve())]
+    candidates += [p for p in work.iterdir() if p.is_file() and p.name != "result.mp4" and p.suffix.lower() in (".mp4", ".mkv", ".webm", ".flv", ".ts")]
     if not candidates:
         raise VideoError("下载引擎没有生成可用的视频文件。")
     source = max(candidates, key=lambda p: p.stat().st_size)
@@ -796,8 +801,8 @@ def _publish(source, output, title, cancel, extension=".mp4"):
     raise VideoError("同名文件过多，请更换保存文件夹。")
 
 
-def download_video(info: dict, format_id: str, output_dir: str, cookies: list[dict] | None = None,
-                   progress=None, log=None, cancel: threading.Event | None = None) -> dict:
+def _perform_download(info: dict, format_id: str, output_dir: str, cookies: list[dict] | None = None,
+                   progress=None, log=None, cancel: threading.Event | None = None, work_dir=None) -> dict:
     """下载所选格式，只有通过全片校验后才发布最终文件。"""
     work = None
     try:
@@ -809,7 +814,8 @@ def download_video(info: dict, format_id: str, output_dir: str, cookies: list[di
         output.mkdir(parents=True, exist_ok=True)
         if not output.is_dir():
             raise VideoError("保存位置不是文件夹。")
-        work = Path(tempfile.mkdtemp(prefix=".video-downloader-", dir=output)).resolve()
+        work = Path(work_dir).resolve()
+        work.mkdir(parents=True, exist_ok=True)
         if work.parent != output or not work.name.startswith(".video-downloader-"):
             raise VideoError("临时目录验证失败，已停止下载。")
         _say(log, f"开始下载：{info.get('title', '视频')}。", cookies)
@@ -851,8 +857,31 @@ def download_video(info: dict, format_id: str, output_dir: str, cookies: list[di
     except Exception:
         _check_cancel(cancel)
         raise VideoError("视频下载或处理失败，未生成成品。请检查网络、磁盘空间后重新解析。") from None
-    finally:
-        if work is not None and work.exists():
-            # Only remove our uniquely named directory, verified to be a child of the chosen output folder.
-            if work.parent == Path(output_dir).expanduser().resolve() and work.name.startswith(".video-downloader-"):
-                shutil.rmtree(work, ignore_errors=True)
+
+
+def download_video(info, format_id, output_dir, cookies=None, progress=None, log=None, cancel=None, task_id=None):
+    import download_tasks as tasks
+    task = tasks.load(task_id) if task_id else tasks.create(info, format_id, output_dir)
+    with tasks.lock(task['id']):
+        if task['format_id'] != format_id or Path(task['output']).resolve() != Path(output_dir).expanduser().resolve():
+            raise VideoError('恢复任务的画质或保存位置不一致。')
+        selected = next((row for row in info.get('formats', []) if row['id'] == format_id), {})
+        if any(selected.get(key) != value for key, value in task.get('format', {}).items()):
+            raise VideoError('原任务的画质参数已变化，请取消此任务后重新下载。')
+        if task.get('result'):
+            result = task['result']
+            tasks.remove(task)
+            return result
+        task['state'] = 'running'; tasks.save(task)
+        try:
+            result = _perform_download(info, format_id, output_dir, cookies, progress, log, cancel, tasks.work_path(task))
+            task.update(state='completed', result=result); tasks.save(task)
+        except Exception:
+            task['state'] = 'paused' if cancel is not None and cancel.is_set() else 'failed'
+            tasks.save(task)
+            raise
+        try:
+            tasks.remove(task)
+        except OSError:
+            _say(log, '下载已完成；缓存清理未完成，下次继续任务时将再次清理。')
+        return result

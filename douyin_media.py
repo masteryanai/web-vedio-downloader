@@ -61,6 +61,15 @@ def post_info(post, url):
 
 def download_post(info, selected, work, cookies, progress, log, cancel):
     from engine import _download_http, _run_process, _tool, _remux, _check_cancel, _progress, VideoError
+    import hashlib
+    import json
+    from urllib.parse import urlsplit
+    resources = [selected['_url']] if info['_kind'] == 'video' else [row['url'] for row in info['_images']] + [info.get('_music', '')]
+    identity = hashlib.sha256(json.dumps([urlsplit(url).path for url in resources]).encode()).hexdigest()
+    marker = work / 'post-id.txt'
+    if marker.exists() and marker.read_text() != identity:
+        raise VideoError('作品媒体内容已变化，请取消此任务后重新下载，避免混合旧内容。')
+    marker.write_text(identity)
     if info['_kind'] == 'video':
         source = work / 'source.mp4'
         _download_http(selected['_url'], source, cookies=cookies, referer=info['url'], progress=progress, cancel=cancel)
@@ -79,7 +88,8 @@ def download_post(info, selected, work, cookies, progress, log, cancel):
         if extension is None:
             raise VideoError('图片服务器未返回有效图片，请重新解析；未生成成品。')
         final = path.with_suffix(extension)
-        path.rename(final)
+        import shutil
+        shutil.copyfile(path, final)
         files.append(final)
         _progress(progress, 60 * (index+1)/len(info['_images']), f'保存原图 {index+1}/{len(info["_images"])}')
     if selected['id'] == 'images':
@@ -96,11 +106,11 @@ def download_post(info, selected, work, cookies, progress, log, cancel):
     for index, path in enumerate(files):
         frame = work / f'frame-{index:03d}.png'
         w, h = selected['width'], selected['height']
-        _run_process([_tool('ffmpeg'), '-v', 'error', '-i', str(path), '-vf', f'scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1', '-frames:v', '1', str(frame)], cancel=cancel, label='处理图文画面')
+        _run_process([_tool('ffmpeg'), '-v', 'error', '-y', '-i', str(path), '-vf', f'scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1', '-frames:v', '1', str(frame)], cancel=cancel, label='处理图文画面')
         normalized.append(frame)
     playlist = work / 'slides.txt'
     playlist.write_text(''.join(f"file '{path.name}'\nduration 3\n" for path in normalized) + f"file '{normalized[-1].name}'\n", encoding='utf-8')
     target = work / 'result.mp4'
     _progress(progress, 70, '合成带配乐的视频')
-    _run_process([_tool('ffmpeg'), '-v', 'error', '-f', 'concat', '-safe', '1', '-i', str(playlist), '-stream_loop', '-1', '-i', str(music), '-t', str(len(files)*3), '-r', '25', '-c:v', 'libopenh264', '-b:v', '4000k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart', str(target)], cancel=cancel, cwd=work, label='合成图文配乐视频')
+    _run_process([_tool('ffmpeg'), '-v', 'error', '-y', '-f', 'concat', '-safe', '1', '-i', str(playlist), '-stream_loop', '-1', '-i', str(music), '-t', str(len(files)*3), '-r', '25', '-c:v', 'libopenh264', '-b:v', '4000k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart', str(target)], cancel=cancel, cwd=work, label='合成图文配乐视频')
     return target, '.mp4'

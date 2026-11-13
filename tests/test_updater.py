@@ -19,6 +19,7 @@ class PublicUpdates(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             updater.asset_url({'browser_download_url':'https://example.com/package.zip'})
 
+    @patch('updater.APP_VERSION', '0.2.1')
     def test_new_version_and_manifest_validation(self):
         manifest = {'application':'WebVideoDownloader', 'version':'0.2.2',
                     'asset':'package.zip', 'size':100, 'sha256':'a'*64}
