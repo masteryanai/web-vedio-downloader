@@ -794,6 +794,12 @@ def gui(args: argparse.Namespace) -> int:
             QTimer.singleShot(0,QApplication.instance().quit)
 
     app = QApplication(sys.argv[:1])
+    from single_instance import SingleInstance
+    instance=SingleInstance(app)
+    try:
+        if not instance.acquire():return 0
+    except RuntimeError as error:
+        QMessageBox.warning(None,'无法启动下载器',str(error));return 1
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("WebVideoDownloader")
     app.setOrganizationName("LocalTools")
@@ -803,6 +809,11 @@ def gui(args: argparse.Namespace) -> int:
     heartbeat=QTimer(app);heartbeat.setInterval(500)
     if recorder:heartbeat.timeout.connect(recorder.beat);heartbeat.start()
     window = Window()
+    def activate_existing():
+        window.desktop.restore_main()
+        modal=app.activeModalWidget()
+        if modal:modal.raise_();modal.activateWindow()
+    instance.attach(activate_existing)
     if args.url:
         window.url_input.setPlainText(args.url)
     window.refresh_buttons()
@@ -841,6 +852,7 @@ def gui(args: argparse.Namespace) -> int:
     finally:
         heartbeat.stop()
         if recorder:recorder.stop()
+        instance.close()
 
 
 STYLE = """
