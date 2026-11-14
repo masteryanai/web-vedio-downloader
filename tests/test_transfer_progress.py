@@ -30,3 +30,7 @@ class TransferProgress(unittest.TestCase):
             percents=[event['download_percent'] for event in events if event['download_percent'] is not None]
             self.assertEqual(percents,[90,95,100])
             self.assertEqual(events[-1]['stage'],'合并或处理音视频文件')
+            self.assertIsNone(events[0]['total_bytes'])
+            self.assertEqual(events[-2]['total_bytes'],1000)
+            self.assertEqual(events[-2]['downloaded_bytes'],1000)
+            self.assertIsNone(events[-2]['phase'])

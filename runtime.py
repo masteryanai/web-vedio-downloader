@@ -7,7 +7,7 @@ import shutil
 import sys
 
 APP_NAME = "Web Video Downloader"
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 SITES = ("央视网", "好看视频", "抖音", "B站")
 
 

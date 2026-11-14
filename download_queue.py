@@ -82,6 +82,7 @@ class DownloadQueue(QObject):
         self.payloads = {}
         self.snapshots = {}
         self.entries = {}
+        self.batch_rows = {}
         self.completed_rows = {}
         self.deleting = set()
         self.stopping = False
@@ -98,6 +99,9 @@ class DownloadQueue(QObject):
             task = tasks.load(task_id)
             if task['state'] in tasks.TERMINAL: return False
             task['state'] = 'queued'; tasks.save(task)
+        if self.batch_rows and all(row['state'] in tasks.TERMINAL for row in self.batch_rows.values()):self.batch_rows.clear()
+        self.batch_rows[task_id]=copy.deepcopy(task)
+        self.snapshots.pop(task_id,None)
         if info is not None:
             self.payloads[task_id] = (copy.deepcopy(info), time.monotonic())
         self.waiting.append((task_id, copy.deepcopy(cookies)))
@@ -116,6 +120,7 @@ class DownloadQueue(QObject):
             thread = QThread(self); thread.setProperty('task_id', task_id)
             try: self.entries[task_id] = tasks.load(task_id)
             except (OSError, ValueError): continue
+            self.batch_rows.setdefault(task_id,dict(self.entries[task_id]))['state']='running'
             cancel = threading.Event()
             job = Job(task_id, self.cached(task_id), cookies, cancel); job.moveToThread(thread)
             self.active[task_id] = (thread, job, cancel)
@@ -137,6 +142,8 @@ class DownloadQueue(QObject):
     @Slot(str, object)
     def on_progress(self, task_id, data):
         snapshot = self.snapshots.setdefault(task_id, {})
+        if data.get('phase')=='download':snapshot['_speed_at']=time.monotonic()
+        else:snapshot.update(speed=None,_speed_at=0,phase=None)
         snapshot.update({k:v for k,v in data.items() if k != 'download_percent' or v is not None or data.get('phase')=='download'})
         self.progress.emit(task_id, data)
 
@@ -149,11 +156,13 @@ class DownloadQueue(QObject):
             if row:
                 row.update(state='completed', stage='已完成', download_percent=100, result=result)
                 self.completed_rows[task_id] = row
+            if task_id in self.batch_rows:self.batch_rows[task_id].update(state='completed',download_percent=100)
             self.payloads.pop(task_id, None)
             self.completed.emit(task_id,result)
         elif error:
             try:
                 task = tasks.load(task_id)
+                if task_id in self.batch_rows:self.batch_rows[task_id].update(task)
                 self.snapshots.setdefault(task_id, {}).update({key:task.get(key) for key in ('download_percent','stage')})
             except (OSError, ValueError):
                 pass
@@ -180,6 +189,7 @@ class DownloadQueue(QObject):
                 task = tasks.load(task_id)
                 if task['state'] in tasks.TERMINAL: return False
                 task['state'] = 'paused'; tasks.save(task)
+                if task_id in self.batch_rows:self.batch_rows[task_id]['state']='paused'
             self.pump()
         self.changed.emit()
         return True
@@ -197,6 +207,7 @@ class DownloadQueue(QObject):
             else:
                 tasks.discard(task_id)
                 self.snapshots.pop(task_id,None);self.payloads.pop(task_id,None);self.entries.pop(task_id,None)
+                self.batch_rows.pop(task_id,None)
                 self.removed.emit(task_id)
         except Exception as error:
             self.failed.emit(task_id, '缓存删除失败：'+str(error))
@@ -211,6 +222,10 @@ class DownloadQueue(QObject):
         self.completed_rows.pop(task_id,None);self.snapshots.pop(task_id,None)
         self.entries.pop(task_id,None);self.payloads.pop(task_id,None)
         self.changed.emit()
+
+    def statistics(self):
+        from transfer_stats import summarize
+        return summarize(self)
 
     def rows(self):
         result = {row['id']:row for row in tasks.records()}

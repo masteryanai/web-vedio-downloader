@@ -237,7 +237,9 @@ def show_update_dialog(parent):
             if self.prepared and not self.cancel.is_set() and not self.closing:
                 try:launch_update(self.prepared)
                 except Exception as error:self.failed(error);return
-                parent.close();QApplication.instance().quit();return
+                if hasattr(parent,'request_exit'):parent.request_exit()
+                else:parent.close();QApplication.instance().quit()
+                return
             self.install.setEnabled(bool(self.info and self.info.get('available')))
             if self.closing:self.close()
         def download(self):

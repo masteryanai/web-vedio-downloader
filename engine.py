@@ -65,7 +65,7 @@ def _say(log, message, cookies=None):
         log(_safe_message(message, cookies))
 
 
-def _progress(callback, percent=0, stage="下载中", speed=None, eta=None, download_percent=None, phase=None):
+def _progress(callback, percent=0, stage="下载中", speed=None, eta=None, download_percent=None, phase=None, downloaded_bytes=None, total_bytes=None):
     import diagnostics
     diagnostics.stage(stage)
     if callback:
@@ -76,6 +76,7 @@ def _progress(callback, percent=0, stage="下载中", speed=None, eta=None, down
             "phase": phase,
             "speed": speed,
             "eta": eta,
+            **({"downloaded_bytes":downloaded_bytes,"total_bytes":total_bytes} if phase=="download" or downloaded_bytes is not None or total_bytes is not None else {}),
         })
 
 
@@ -444,6 +445,7 @@ def _yt_ui_formats(raw):
         groups[key] = {
             "id": f"yt-{index}", "label": label, "width": width, "height": height,
             "filesize": int(size) if size else None, "ext": "mp4", "_selector": selector,
+            "_exact_component_sizes": {str(row.get('format_id')): _number(row.get('filesize')) for row in ([item,audio] if audio else [item])},
             "_component_sizes": {str(row.get("format_id")): _number(row.get("filesize") or row.get("filesize_approx")) for row in ([item,audio] if audio else [item])},
             "_audio_expected": bool(audio or item.get("acodec") not in (None, "none")),
             "_quality": _number(item.get("quality")), "_tbr": _number(item.get("tbr")),
@@ -630,11 +632,13 @@ def _remux(source, target, progress, cancel):
 
 def _download_http(url, path, *, cookies, referer, progress, cancel):
     from http_resume import download
+    byte_state={}
     try:
         download(url, path, opener=_opener(cookies, urllib.parse.urlsplit(url).hostname or ""),
                  headers={"User-Agent": IPHONE_UA, "Referer": referer, "Accept": "*/*"},
                  check=lambda: _check_cancel(cancel),
-                 report=lambda percent, stage, speed, eta: _progress(progress, percent, stage, speed, eta, percent*1.25 if speed is not None and percent is not None else None, phase="download"))
+                 bytes_report=lambda count,total:byte_state.update(downloaded_bytes=count,total_bytes=total),
+                 report=lambda percent, stage, speed, eta: _progress(progress, percent, stage, speed, eta, percent*1.25 if speed is not None and percent is not None else None, phase=None if stage=="下载文件已就绪" else "download",**byte_state))
     except ValueError as error:
         raise VideoError(str(error)) from None
 
@@ -670,7 +674,12 @@ def _download_cctv(info, selected, work, cookies, progress, log, cancel):
         for index, url in enumerate(urls):
             _check_cancel(cancel)
             piece = work / f'slice-{index:06d}.ts'
-            _download_http(url, piece, cookies=cookies, referer=info['url'], progress=None, cancel=cancel)
+            def piece_progress(data):
+                if progress:
+                    part=(data.get('download_percent') or 0)/100
+                    progress({**data,'stage':f'央视分片 {index+1}/{segment_count}',
+                              'download_percent':100*(index+part)/max(1,segment_count),'total_bytes':None,'downloaded_bytes':None})
+            _download_http(url, piece, cookies=cookies, referer=info['url'], progress=piece_progress, cancel=cancel)
             local.append(piece.name)
             _progress(progress, 75*(index+1)/max(1, segment_count), f'央视分片 {index+1}/{segment_count}', download_percent=100*(index+1)/max(1, segment_count))
         local_playlist = work / 'local.m3u8'
@@ -695,7 +704,7 @@ def _download_cctv(info, selected, work, cookies, progress, log, cancel):
             _check_cancel(cancel)
             total = status.get('total_bytes') or status.get('total_bytes_estimate') or 0
             count = status.get('downloaded_bytes') or 0
-            _progress(progress, min(80, count / total * 80) if total else 0, '下载央视视频', status.get('speed'), status.get('eta'), count/total*100 if total else None, phase='download')
+            _progress(progress, min(80, count / total * 80) if total else 0, '下载央视视频', status.get('speed'), status.get('eta'), count/total*100 if total else None, phase=None if status.get('status')=='finished' else 'download',downloaded_bytes=count,total_bytes=status.get('total_bytes'))
         options.update({'outtmpl':str(work/'cctv.%(ext)s'), 'hls_prefer_native':True,
                         'progress_hooks':[native_progress],
                         'ffmpeg_location':str(Path(_tool('ffmpeg')).parent)})
@@ -727,6 +736,7 @@ def _download_ytdlp(info, selected, work, cookies, progress, log, cancel):
     component_ids = selected['_selector'].split('+')
     totals = {key: selected.get('_component_sizes', {}).get(key, 0) for key in component_ids}
     counts = {}
+    exact_totals=dict(selected.get('_exact_component_sizes',{}))
     def download_hook(status):
         _check_cancel(cancel)
         if status.get('status') not in ('downloading','finished'): return
@@ -735,9 +745,10 @@ def _download_ytdlp(info, selected, work, cookies, progress, log, cancel):
         total = status.get('total_bytes') or status.get('total_bytes_estimate') or totals.get(key,0)
         count = status.get('downloaded_bytes') or (total if status['status']=='finished' else 0)
         totals[key]=total; counts[key]=count
+        if status.get('total_bytes'):exact_totals[key]=status['total_bytes']
         known = all(totals.get(part,0)>0 for part in component_ids)
         percent = min(100,100*sum(counts.get(part,0) for part in component_ids)/sum(totals[part] for part in component_ids)) if known else None
-        _progress(progress,(percent or 0)*.8,'下载音视频文件',status.get('speed'),status.get('eta'),percent,phase='download')
+        _progress(progress,(percent or 0)*.8,'下载音视频文件',status.get('speed'),status.get('eta'),percent,phase=None if status['status']=='finished' else 'download',downloaded_bytes=sum(counts.get(part,0) for part in component_ids),total_bytes=sum(exact_totals[part] for part in component_ids) if all(exact_totals.get(part,0)>0 for part in component_ids) else None)
 
     def post_hook(status):
         _check_cancel(cancel)
@@ -893,6 +904,8 @@ def download_video(info, format_id, output_dir, cookies=None, progress=None, log
         def report(data):
             if data.get('download_percent') is not None or data.get('phase') == 'download':
                 task['download_percent'] = data['download_percent']
+            for key in ('total_bytes','downloaded_bytes'):
+                if key in data:task[key]=data[key]
             task['stage'] = data.get('stage', '')
             if time.monotonic()-last_saved[0] >= .75:
                 tasks.save(task); last_saved[0] = time.monotonic()

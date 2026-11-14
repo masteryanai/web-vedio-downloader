@@ -108,7 +108,7 @@ def archive(task):
     if task['state']=='completed':
         task.update(stage='已完成',download_percent=100)
     fields = ('id','url','site','title','format_id','format','output','state','stage',
-              'created_at','finished_at','download_percent','result')
+              'created_at','finished_at','download_percent','total_bytes','downloaded_bytes','result')
     public = {key:task[key] for key in fields if key in task}
     target = history_file(task['id']); temporary = target.with_suffix('.tmp')
     temporary.write_text(json.dumps(public,ensure_ascii=False,indent=2),encoding='utf-8')

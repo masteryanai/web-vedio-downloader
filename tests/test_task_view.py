@@ -46,6 +46,10 @@ def gui_check():
                 created.append(task)
             tasks.history_file('d'*32).write_text('{broken')
             queue=DownloadQueue();dialog=TaskDialog(queue,lambda _:None);dialog.show();settle()
+            def select_group(group):dialog.tabs.setCurrentIndex(next(i for i in range(dialog.tabs.count()) if dialog.tabs.tabData(i)==group))
+            assert dialog.current_group()==1 and dialog.table.rowCount()==4
+            assert [dialog.tabs.tabData(i) for i in range(4)]==[1,2,0,3]
+            select_group(0)
             assert dialog.table.rowCount()==7
             assert dialog.table.itemDelegateForColumn(3) is not None, '状态列缺少防溢出绘制'
             cell=dialog.table.cellWidget(0,1);bar=cell.findChild(QProgressBar)
@@ -90,11 +94,11 @@ def gui_check():
             screenshot=os.environ.get('TASK_VIEW_SCREENSHOT')
             if screenshot:dialog.grab().save(screenshot)
             queue.active.pop(running_id);queue.snapshots.pop(running_id);dialog.refresh()
-            dialog.tabs.setCurrentIndex(1);assert dialog.table.rowCount()==4
+            select_group(1);assert dialog.table.rowCount()==4
             assert dialog.buttons['delete'].isHidden()
             assert all(not dialog.buttons[key].isHidden() for key in ('pause','resume','cancel'))
             assert created[3]['id'] in dialog.visible # 100% while verifying is still ongoing.
-            dialog.tabs.setCurrentIndex(2);assert dialog.table.rowCount()==2
+            select_group(2);assert dialog.table.rowCount()==2
             assert not dialog.buttons['clear'].isHidden() and not dialog.buttons['clear'].isEnabled()
             dialog.table.selectRow(0)
             with patch.object(DeleteDialog,'exec') as popup:
@@ -103,8 +107,8 @@ def gui_check():
             dialog.refresh();assert len(dialog.checked_ids)==2
             assert dialog.buttons['clear'].isEnabled()
             dialog.select_none.click();assert not dialog.checked_ids and not dialog.buttons['clear'].isEnabled()
-            dialog.tabs.setCurrentIndex(3);assert dialog.table.rowCount()==1
-            dialog.tabs.setCurrentIndex(0)
+            select_group(3);assert dialog.table.rowCount()==1
+            select_group(0)
             dialog.search.setText('AGE动漫');assert dialog.table.rowCount()==7
             dialog.select_all.click();assert len(dialog.checked_ids)==7
             assert dialog.buttons['delete'].isHidden()
@@ -175,7 +179,7 @@ def gui_check():
             for n in range(3):
                 task=tasks.create({'url':f'https://example.com/bulk/{n}','site':'AGE动漫','title':f'bulk-{n}'},'source',str(root/'out'))
                 task['state']='completed';tasks.save(task);tasks.finish(task);extras.append(task)
-            dialog.search.clear();dialog.tabs.setCurrentIndex(2);dialog.refresh()
+            dialog.search.clear();select_group(2);dialog.refresh()
             for i in range(dialog.table.rowCount()):
                 item=dialog.table.item(i,0)
                 if item.data(Qt.ItemDataRole.UserRole) in {row['id'] for row in extras[:2]}:item.setCheckState(Qt.CheckState.Checked)

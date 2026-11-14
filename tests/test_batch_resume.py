@@ -53,7 +53,7 @@ def check():
             assert len(accepted)==1 and window.resume_browser is None
             assert window.url_input.toPlainText()=='https://example.com/current-form' and window.info is info
             assert not window.resume_pending
-        window.close();return 0
+        window.request_exit();return 0
     with patch('douyin_browser.DouyinCapture',Capture),patch.object(QApplication,'exec',side_effect=exercise):
         assert main.gui(Namespace(smoke_ui=False,url=None))==0
 

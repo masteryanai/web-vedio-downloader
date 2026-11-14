@@ -127,6 +127,7 @@ def gui(args: argparse.Namespace) -> int:
             self.worker = None
             self.cancel_event = threading.Event()
             self.close_when_idle = False
+            self.force_exit=bool(args.smoke_ui or getattr(args,"smoke_inspect",False))
             self.current_task_id = None
             self.resume_task_id = None
             self.resume_after_inspect = False
@@ -150,6 +151,8 @@ def gui(args: argparse.Namespace) -> int:
             self.queue.changed.connect(self.refresh_buttons)
             self.queue.idle.connect(self.maybe_close)
             self._build()
+            from desktop_ui import DesktopController
+            self.desktop=DesktopController(self,self.queue)
             unfinished = tasks.pending()
             if unfinished:
                 self.status_text.setText(f"有 {len(unfinished)} 个未完成任务，可在“下载任务”中继续")
@@ -212,7 +215,8 @@ def gui(args: argparse.Namespace) -> int:
             heading.addWidget(QLabel("粘贴网页或分享文案，先查看实际可用的画质。", objectName="muted"))
             header.addLayout(heading)
             header.addStretch()
-            settings = QPushButton('⚙ 设置'); settings.setToolTip('配置并行下载数')
+            self.total_speed_label=QLabel('整体下载速度：0 B/s');self.total_speed_label.setObjectName('muted');header.addWidget(self.total_speed_label)
+            settings = QPushButton('⚙ 设置'); settings.setToolTip('下载、关闭行为与悬浮框')
             settings.clicked.connect(self.show_settings); header.addWidget(settings)
             self.state_badge = QLabel("等待链接")
             self.state_badge.setObjectName("stateBadge")
@@ -371,19 +375,10 @@ def gui(args: argparse.Namespace) -> int:
             folder.mkdir(parents=True, exist_ok=True)
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
-        def show_settings(self):
-            from PySide6.QtWidgets import QSpinBox
-            dialog = QDialog(self); dialog.setWindowTitle('下载设置'); dialog.resize(380, 200)
-            layout = QVBoxLayout(dialog); layout.addWidget(QLabel('同时运行的下载任务数（1～10）'))
-            count = QSpinBox(); count.setRange(1,10); count.setValue(self.queue.limit); layout.addWidget(count)
-            explanation = QLabel('超过上限的任务排队等待。降低上限不会中断正在运行的任务。设置会在重启后保留。')
-            explanation.setWordWrap(True); layout.addWidget(explanation)
-            save = QPushButton('保存'); layout.addWidget(save)
-            def apply():
-                try:
-                    preferences.save_limit(count.value()); self.queue.set_limit(count.value()); dialog.accept()
-                except Exception as error: QMessageBox.warning(dialog, '设置未保存', str(error))
-            save.clicked.connect(apply); dialog.exec()
+        def show_settings(self):self.desktop.show_settings()
+
+        def request_exit(self):
+            self.force_exit=True;self.close()
 
         def show_diagnostics(self):
             if self.diagnostic_dialog:
@@ -497,7 +492,7 @@ def gui(args: argparse.Namespace) -> int:
             dialog.exec()
 
         def check_updates(self):
-            if self.is_busy() or self.queue.active or self.queue.waiting or self.resume_pending:
+            if self.is_busy() or self.queue.active or self.queue.waiting or self.resume_pending or (self.diagnostic_dialog and self.diagnostic_dialog.thread is not None):
                 QMessageBox.information(self, "请先完成当前任务", "下载或解析结束后再安装更新。")
                 return
             from updater import show_update_dialog
@@ -774,6 +769,9 @@ def gui(args: argparse.Namespace) -> int:
             else:self.resume_task(task_id)
 
         def closeEvent(self,event):
+            if not self.force_exit and not self.close_when_idle:
+                if not self.desktop.allow_close():event.ignore();return
+                self.force_exit=True
             if self.diagnostic_dialog and self.diagnostic_dialog.thread is not None:
                 self.diagnostic_dialog.reject();QTimer.singleShot(100,self.close);event.ignore();return
             self.resume_pending.clear()
@@ -787,9 +785,11 @@ def gui(args: argparse.Namespace) -> int:
             if self.task_dialog:self.task_dialog.close()
             if self.accounts_dialog:self.accounts_dialog.close()
             if self.diagnostic_dialog:self.diagnostic_dialog.close()
-            event.accept()
+            self.desktop.shutdown();event.accept()
+            QTimer.singleShot(0,QApplication.instance().quit)
 
     app = QApplication(sys.argv[:1])
+    app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("WebVideoDownloader")
     app.setOrganizationName("LocalTools")
     app.setFont(QFont("Microsoft YaHei UI", 10))
@@ -813,6 +813,8 @@ def gui(args: argparse.Namespace) -> int:
         QTimer.singleShot(900, capture)
     if not args.smoke_ui and not getattr(args,'smoke_inspect',False):
         def notify_incidents():
+            if window.desktop.hidden:
+                QTimer.singleShot(2000,notify_incidents);return
             names=diagnostics.unreported()
             if not names:return
             answer=QMessageBox.question(window,'发现异常记录','发现上次异常退出或疑似卡死记录。是否打开日志与故障反馈？')

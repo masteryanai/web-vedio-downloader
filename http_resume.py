@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 
 
-def download(url, path, *, opener, headers, check, report):
+def download(url, path, *, opener, headers, check, report, bytes_report=None):
     path = Path(path)
     sidecar = path.with_name(path.name + '.resume.json')
     for attempt in range(3):
@@ -18,6 +18,7 @@ def download(url, path, *, opener, headers, check, report):
             meta = {}
         offset = path.stat().st_size if path.exists() else 0
         if meta.get('done') and offset == meta.get('total') and offset > 0:
+            if bytes_report:bytes_report(offset,offset)
             report(80, '下载文件已就绪', 0, 0)
             return
         validator = meta.get('etag') or meta.get('modified')
@@ -64,6 +65,7 @@ def download(url, path, *, opener, headers, check, report):
                         if not chunk:
                             break
                         output.write(chunk); count += len(chunk)
+                        if bytes_report:bytes_report(count,total or None)
                         now = time.monotonic()
                         if now-last >= .15:
                             speed = (count-offset)/max(.01, now-started)
@@ -72,6 +74,7 @@ def download(url, path, *, opener, headers, check, report):
                             last = now
                 if not count or total and count != total:
                     raise OSError('incomplete response')
+                if bytes_report:bytes_report(count,count)
                 report(80, '下载文件已就绪', 0, 0)
                 meta.update(total=count, done=True)
                 temporary = sidecar.with_suffix('.tmp')

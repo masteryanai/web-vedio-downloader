@@ -44,6 +44,7 @@ def check_export():
         assert 'MY_COOKIE' not in body and 'MY_TOKEN' not in body and '手动添加' in body
         assert '提交' in dialog.status.text()
     dialog.close();rec.stop()
+    assert rec.child is None or rec.child.poll() is not None, 'watcher must release files before shutdown completes'
 
 
 def check_exceptions():

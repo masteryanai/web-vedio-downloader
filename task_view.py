@@ -4,10 +4,12 @@ from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,QTabBar,
     QTableWidget,QTableWidgetItem,QHeaderView,QAbstractItemView,QProgressBar,
     QPushButton,QMessageBox,QStyledItemDelegate,QWidget,QRadioButton,QDialogButtonBox)
+from transfer_stats import row_speed,speed_text
 import download_tasks as tasks
 
 # Fixed application messages form the stable default width. Variable source logs
 # (titles, extractor details, errors) use the same cell clipping and tooltip.
+TABS=((1,'进行中'),(2,'已完成'),(0,'全部'),(3,'已取消'))
 TASK_STATES={'queued':'排队中','paused':'已暂停','failed':'失败，待处理','completed':'已完成','cancelled':'已取消'}
 STATUS_SHORTCUTS={'AGE：连接视频源，确认已下载进度。':'确认已下载进度'}
 STATUS_TEXTS=tuple(TASK_STATES.values())+(
@@ -72,18 +74,21 @@ class TaskDialog(QDialog):
         layout=QVBoxLayout(self)
         self.summary=QLabel();self.summary.setWordWrap(True);layout.addWidget(self.summary)
         self.tabs=QTabBar();self.tabs.setExpanding(False)
-        for name in ('全部','进行中','已完成','已取消'):self.tabs.addTab(name)
+        for group,name in TABS:
+            index=self.tabs.addTab(name);self.tabs.setTabData(index,group)
         layout.addWidget(self.tabs)
         self.search=QLineEdit();self.search.setClearButtonEnabled(True)
         self.search.setPlaceholderText('搜索作品名、网站或保存路径（当前分组）');layout.addWidget(self.search)
-        self.table=QTableWidget(0,5);table=self.table
-        table.setHorizontalHeaderLabels(['作品','进度','网站','状态','保存位置'])
+        self.table=QTableWidget(0,6);table=self.table
+        table.setHorizontalHeaderLabels(['作品','进度','网站','状态','保存位置','下载速度'])
+        table.horizontalHeader().moveSection(5,2)
         table.horizontalHeaderItem(4).setTextAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
         table.horizontalHeader().setStretchLastSection(False)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         table.setWordWrap(False);table.setTextElideMode(Qt.TextElideMode.ElideNone)
         table.setItemDelegateForColumn(0,ElidingDelegate(table))
         table.setItemDelegateForColumn(3,ElidingDelegate(table))
+        table.setItemDelegateForColumn(5,ElidingDelegate(table))
         table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         table.verticalHeader().setDefaultSectionSize(32)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -103,12 +108,20 @@ class TaskDialog(QDialog):
                                 ('cancel','取消所选下载',self.cancel),('delete','删除所选记录…',self.delete),('clear','清除下载记录',self.delete)):
             button=QPushButton(text);button.clicked.connect(action);controls.addWidget(button);self.buttons[key]=button
         layout.addLayout(controls)
+        footer=QHBoxLayout();footer.addStretch();self.total_speed=QLabel();footer.addWidget(self.total_speed);layout.addLayout(footer)
         table.itemSelectionChanged.connect(self.update_actions)
         table.itemChanged.connect(self.check_changed)
         self.tabs.currentChanged.connect(lambda _:self.filter_changed())
         self.search.textChanged.connect(lambda _:self.filter_changed())
         self.timer=QTimer(self);self.timer.setInterval(500);self.timer.timeout.connect(self.refresh)
         self.timer.start();self.resize(1100,520);self.refresh()
+
+    def hideEvent(self,event):
+        self.timer.stop();super().hideEvent(event)
+
+    def showEvent(self,event):
+        if not self.closing:self.timer.start();self.refresh()
+        super().showEvent(event)
 
     def eventFilter(self,watched,event):
         if watched==self.table.viewport() and event.type()==QEvent.Type.Resize:
@@ -132,8 +145,10 @@ class TaskDialog(QDialog):
             self.table.setColumnWidth(3,status);self.status_default_width=status
         paths={row['output'] for row in self.visible.values()}
         natural=max([240]+[metrics.horizontalAdvance(path)+30 for path in paths])
-        for column,size in ((0,title),(1,160),(2,100),(4,max(natural,width-title-260-self.table.columnWidth(3)))):
+        for column,size in ((0,title),(1,160),(2,100),(5,120),(4,max(natural,width-title-380-self.table.columnWidth(3)))):
             self.table.setColumnWidth(column,size)
+
+    def current_group(self):return self.tabs.tabData(self.tabs.currentIndex())
 
     def selected(self):
         if not self.table.selectionModel().hasSelection():return None
@@ -147,8 +162,8 @@ class TaskDialog(QDialog):
     def render(self,reset_scroll=False):
         selected=self.selected();selected_id=selected['id'] if selected else None
         counts=[len(self.all_rows)]+[sum(group_of(row)==group for row in self.all_rows) for group in (1,2,3)]
-        for i,name in enumerate(('全部','进行中','已完成','已取消')):self.tabs.setTabText(i,f'{name} ({counts[i]})')
-        group=self.tabs.currentIndex();query=self.search.text()
+        for i,(group,name) in enumerate(TABS):self.tabs.setTabText(i,f'{name} ({counts[group]})')
+        group=self.current_group();query=self.search.text()
         rows=[row for row in self.all_rows if matches(row,group,query)]
         old_ids=list(self.visible);ids=[row['id'] for row in rows]
         self.checked_ids.intersection_update(ids)
@@ -161,7 +176,7 @@ class TaskDialog(QDialog):
             for i,task in enumerate(rows):
                 state=TASK_STATES.get(task['state'],task.get('stage') or '准备中')
                 if task['state']=='running' and task['id'] not in self.queue.active:state='其他窗口运行或上次中断'
-                for j,value in ((0,task['title']),(2,task['site']),(3,state),(4,task['output'])):
+                for j,value in ((0,task['title']),(2,task['site']),(3,state),(4,task['output']),(5,speed_text(row_speed(self.queue,task)))):
                     item=self.table.item(i,j)
                     if item is None:item=QTableWidgetItem();self.table.setItem(i,j,item)
                     display=STATUS_SHORTCUTS.get(value,value) if j==3 else value
@@ -185,6 +200,8 @@ class TaskDialog(QDialog):
             if selected_id in self.visible:self.table.selectRow(ids.index(selected_id))
         self.table.horizontalScrollBar().setValue(scroll);self.table.verticalScrollBar().setValue(vertical)
         self.summary.setText(f'运行 {len(self.queue.active)} / 并行上限 {self.queue.limit} · 排队 {len(self.queue.waiting)} · 当前显示 {len(rows)} / {counts[group]} 条；关闭此窗口不影响下载。')
+        rate=self.queue.statistics()['speed'] if hasattr(self.queue,'statistics') else 0
+        self.total_speed.setText('整体下载速度：'+speed_text(rate))
         self.update_actions()
         if ids!=old_ids or not old_ids:self.schedule_fit()
 
@@ -212,7 +229,7 @@ class TaskDialog(QDialog):
                 'cancel':not terminal,'delete':terminal and not busy}[action]
 
     def update_actions(self):
-        rows=self.checked();group=self.tabs.currentIndex()
+        rows=self.checked();group=self.current_group()
         self.check_count.setText(f'已勾选 {len(rows)} 条（仅当前列表）')
         self.select_all.setEnabled(bool(self.visible));self.select_none.setEnabled(bool(rows))
         for action in ('pause','resume','cancel','delete'):

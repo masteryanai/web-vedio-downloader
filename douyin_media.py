@@ -82,7 +82,13 @@ def download_post(info, selected, work, cookies, progress, log, cancel):
     for index, image in enumerate(info['_images']):
         _check_cancel(cancel)
         path = work / f'{index+1:03d}.image'
-        _download_http(image['url'], path, cookies=cookies, referer=info['url'], progress=None, cancel=cancel)
+        def image_progress(data):
+            if progress:
+                fraction=(data.get('download_percent') or 0)/100
+                progress({**data,'stage':f'保存原图 {index+1}/{len(info["_images"])}',
+                          'download_percent':100*(index+fraction)/(len(info['_images'])+(0 if selected['id']=='images' else 1)),
+                          'total_bytes':None,'downloaded_bytes':None})
+        _download_http(image['url'], path, cookies=cookies, referer=info['url'], progress=image_progress, cancel=cancel)
         head = path.read_bytes()[:32]
         extension = '.jpg' if head.startswith(b'\xff\xd8\xff') else '.png' if head.startswith(b'\x89PNG\r\n\x1a\n') else '.webp' if head[:4] == b'RIFF' and head[8:12] == b'WEBP' else '.avif' if b'ftyp' in head and (b'avif' in head or b'avis' in head) else None
         if extension is None:
@@ -101,7 +107,12 @@ def download_post(info, selected, work, cookies, progress, log, cancel):
                 archive.write(path, path.name)
         return target, '.zip'
     music = work / 'music.audio'
-    _download_http(info['_music'], music, cookies=cookies, referer=info['url'], progress=None, cancel=cancel)
+    def music_progress(data):
+        if progress:
+            fraction=(data.get('download_percent') or 0)/100
+            progress({**data,'stage':'下载图文配乐','download_percent':100*(len(info['_images'])+fraction)/(len(info['_images'])+1),
+                      'total_bytes':None,'downloaded_bytes':None})
+    _download_http(info['_music'], music, cookies=cookies, referer=info['url'], progress=music_progress, cancel=cancel)
     _progress(progress, 65, '处理图文画面', download_percent=100)
     # Normalize each source separately; originals are never modified.
     normalized = []

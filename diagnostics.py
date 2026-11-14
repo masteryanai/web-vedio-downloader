@@ -239,20 +239,24 @@ class Recorder:
     def stop(self):
         if self.closed:return
         self.closed=True;self.event('session.stop');self.stop_event.set()
+        self.sampler.join(timeout=1)
         try:atomic_json(self.session_dir/'clean.json',{'clean':True,'time':time.time()})
         except OSError:pass
         try:self.pending.put(None,timeout=.2);self.writer.join(timeout=1)
         except queue.Full:pass
+        if self.child:
+            try:self.child.wait(timeout=2)
+            except subprocess.TimeoutExpired:self.dropped+=1
 
 
 def event(kind,message=''):
-    if _current:
+    if _current and not _current.closed:
         try:_current.event(kind,message)
         except Exception:pass
 
 
 def stage(name):
-    if not _current:return
+    if not _current or _current.closed:return
     ident=threading.get_ident();now=time.monotonic();previous=_stages.get(ident)
     if previous and (previous[0]==name or now-previous[1]<.2):return
     if len(_stages)>128:_stages.clear()
