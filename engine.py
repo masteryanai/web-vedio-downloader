@@ -59,11 +59,15 @@ def _safe_message(message, cookies=None):
 
 
 def _say(log, message, cookies=None):
+    import diagnostics
+    diagnostics.event('engine.log',_safe_message(message,cookies))
     if log:
         log(_safe_message(message, cookies))
 
 
 def _progress(callback, percent=0, stage="下载中", speed=None, eta=None, download_percent=None, phase=None):
+    import diagnostics
+    diagnostics.stage(stage)
     if callback:
         callback({
             "percent": max(0.0, min(100.0, float(percent or 0))),

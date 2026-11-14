@@ -12,8 +12,11 @@ from pathlib import Path
 import re
 import sys
 import threading
+import time
 import traceback
 from urllib.parse import urlsplit
+
+import diagnostics
 
 from runtime import APP_NAME, APP_VERSION, SITES, default_download_dir
 
@@ -104,8 +107,11 @@ def gui(args: argparse.Namespace) -> int:
         @Slot()
         def run(self):
             try:
-                self.succeeded.emit(self.action(self))
+                started=time.monotonic();diagnostics.event('worker.begin')
+                result=self.action(self);diagnostics.event('worker.action.return',f'duration={time.monotonic()-started:.3f}s')
+                self.succeeded.emit(result)
             except Exception as exc:
+                diagnostics.exception('worker.failed',exc,exc.__traceback__)
                 self.failed.emit(str(exc))
             finally:
                 self.finished.emit()
@@ -133,6 +139,7 @@ def gui(args: argparse.Namespace) -> int:
             self.accounts.changed.connect(self.account_changed)
             self.accounts_dialog = None
             self.queue = DownloadQueue(preferences.parallel_limit(), self)
+            self.diagnostic_dialog = None
             self.task_dialog = None
             self.add_animations = []
             self.queue.progress.connect(self.queue_progress)
@@ -179,6 +186,8 @@ def gui(args: argparse.Namespace) -> int:
             task_button.setObjectName("sideButton")
             task_button.clicked.connect(self.show_tasks)
             left.addWidget(task_button)
+            diagnostic_button=QPushButton('日志与故障反馈');diagnostic_button.setObjectName('sideButton')
+            diagnostic_button.clicked.connect(self.show_diagnostics);left.addWidget(diagnostic_button)
             left.addSpacing(26)
             supported = QPushButton("查看已适配列表")
             supported.setObjectName("sideButton")
@@ -353,7 +362,7 @@ def gui(args: argparse.Namespace) -> int:
             self.url_input.setPlainText(QApplication.clipboard().text().strip())
 
         def choose_folder(self):
-            folder = QFileDialog.getExistingDirectory(self, "选择下载文件夹", self.output_path.text())
+            folder = QFileDialog.getExistingDirectory(self, "选择下载文件夹", self.output_path.text(),QFileDialog.Option.ShowDirsOnly|QFileDialog.Option.DontUseNativeDialog)
             if folder:
                 self.output_path.setText(folder)
 
@@ -375,6 +384,14 @@ def gui(args: argparse.Namespace) -> int:
                     preferences.save_limit(count.value()); self.queue.set_limit(count.value()); dialog.accept()
                 except Exception as error: QMessageBox.warning(dialog, '设置未保存', str(error))
             save.clicked.connect(apply); dialog.exec()
+
+        def show_diagnostics(self):
+            if self.diagnostic_dialog:
+                self.diagnostic_dialog.show();self.diagnostic_dialog.raise_();return
+            from diagnostic_view import DiagnosticDialog
+            dialog=DiagnosticDialog(self);dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self.diagnostic_dialog=dialog
+            dialog.finished.connect(lambda _:setattr(self,'diagnostic_dialog',None));dialog.show()
 
         def show_tasks(self):
             if self.task_dialog:
@@ -510,6 +527,7 @@ def gui(args: argparse.Namespace) -> int:
                 return
             self.cancel_event = threading.Event()
             self.task_kind = kind
+            diagnostics.event('operation.begin',kind)
             self.active_thread = QThread(self)
             self.worker = Worker(action)
             self.worker.moveToThread(self.active_thread)
@@ -663,6 +681,7 @@ def gui(args: argparse.Namespace) -> int:
 
         @Slot(object)
         def task_success(self, result):
+            diagnostics.event('ui.result.received',self.task_kind)
             self.progress_bar.setRange(0, 100)
             if self.task_kind == "inspect":
                 self.info = result
@@ -685,6 +704,7 @@ def gui(args: argparse.Namespace) -> int:
                 self.state_badge.setText("可下载")
                 self.progress_bar.setValue(0)
                 self.append_log(f"解析完成：{result['site']}，{len(result['formats'])} 档画质。")
+                diagnostics.event('ui.result.applied',result['site'])
 
         @Slot(str)
         def task_failure(self, message):
@@ -697,6 +717,7 @@ def gui(args: argparse.Namespace) -> int:
 
         @Slot()
         def thread_finished(self):
+            diagnostics.event('operation.thread.finished',self.task_kind)
             self.active_thread = None
             self.worker = None
             self.task_kind = ""
@@ -731,6 +752,7 @@ def gui(args: argparse.Namespace) -> int:
 
         @Slot(str)
         def append_log(self, message):
+            diagnostics.event('ui.log',message)
             clean = re.sub(r"https?://\S+", "[网站地址]", str(message))
             clean = re.sub(r"(?i)(cookie|authorization|access_token|auth_key|sessdata)\s*[:=]\s*\S+", r"\1=[已隐藏]", clean)
             self.log_box.appendPlainText(clean)
@@ -752,6 +774,8 @@ def gui(args: argparse.Namespace) -> int:
             else:self.resume_task(task_id)
 
         def closeEvent(self,event):
+            if self.diagnostic_dialog and self.diagnostic_dialog.thread is not None:
+                self.diagnostic_dialog.reject();QTimer.singleShot(100,self.close);event.ignore();return
             self.resume_pending.clear()
             if self.resume_browser is not None:
                 self.close_when_idle=True;self.resume_browser.reject()
@@ -762,6 +786,7 @@ def gui(args: argparse.Namespace) -> int:
                 event.ignore();self.maybe_close();return
             if self.task_dialog:self.task_dialog.close()
             if self.accounts_dialog:self.accounts_dialog.close()
+            if self.diagnostic_dialog:self.diagnostic_dialog.close()
             event.accept()
 
     app = QApplication(sys.argv[:1])
@@ -769,6 +794,9 @@ def gui(args: argparse.Namespace) -> int:
     app.setOrganizationName("LocalTools")
     app.setFont(QFont("Microsoft YaHei UI", 10))
     app.setStyleSheet(STYLE)
+    recorder=diagnostics.start()
+    heartbeat=QTimer(app);heartbeat.setInterval(500)
+    if recorder:heartbeat.timeout.connect(recorder.beat);heartbeat.start()
     window = Window()
     if args.url:
         window.url_input.setPlainText(args.url)
@@ -783,7 +811,29 @@ def gui(args: argparse.Namespace) -> int:
             window.close()
             app.quit()
         QTimer.singleShot(900, capture)
-    return app.exec()
+    if not args.smoke_ui and not getattr(args,'smoke_inspect',False):
+        def notify_incidents():
+            names=diagnostics.unreported()
+            if not names:return
+            answer=QMessageBox.question(window,'发现异常记录','发现上次异常退出或疑似卡死记录。是否打开日志与故障反馈？')
+            diagnostics.acknowledge(names)
+            if answer==QMessageBox.StandardButton.Yes:window.show_diagnostics()
+        QTimer.singleShot(1500,notify_incidents)
+    inspection_ok=[False]
+    if getattr(args,'smoke_inspect',False):
+        started=time.monotonic()
+        def inspect_result():
+            if window.info:
+                inspection_ok[0]=True;window.close()
+            elif time.monotonic()-started>100:window.cancel();window.close()
+        probe=QTimer(window);probe.setInterval(250);probe.timeout.connect(inspect_result);probe.start()
+        QTimer.singleShot(250,window.inspect)
+    try:
+        result=app.exec()
+        return (0 if inspection_ok[0] else 2) if getattr(args,'smoke_inspect',False) else result
+    finally:
+        heartbeat.stop()
+        if recorder:recorder.stop()
 
 
 STYLE = """
@@ -821,6 +871,8 @@ QToolTip { background:white; color:#17283b; border:1px solid #dce3ec; }
 
 
 def main() -> int:
+    if len(sys.argv)==3 and sys.argv[1]=='--diagnostic-watchdog':
+        diagnostics.watchdog(sys.argv[2]);return 0
     parser = argparse.ArgumentParser(description="Windows video downloader prototype")
     operation = parser.add_mutually_exclusive_group()
     operation.add_argument("--inspect", help="Inspect a URL without opening the GUI")
@@ -830,6 +882,7 @@ def main() -> int:
     parser.add_argument("--report", help="Write a JSON result for command-line verification")
     parser.add_argument("--url", help="Prefill the GUI URL field")
     parser.add_argument("--smoke-ui", action="store_true", help="Open and close an offscreen window")
+    parser.add_argument("--smoke-inspect",action="store_true",help=argparse.SUPPRESS)
     parser.add_argument("--screenshot", help="Save the offscreen window screenshot")
     args = parser.parse_args()
     if args.inspect or args.download:
@@ -844,5 +897,5 @@ if __name__ == "__main__":
         from runtime import app_data_dir
         folder = app_data_dir()
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "startup-error.log").write_text(traceback.format_exc(), encoding="utf-8")
+        (folder / "startup-error.log").write_text(diagnostics.redact_export(traceback.format_exc()), encoding="utf-8")
         raise

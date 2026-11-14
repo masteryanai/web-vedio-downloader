@@ -1,9 +1,19 @@
 """Resolve AGE's external player using a disposable installed-browser session."""
+from contextlib import contextmanager
 import os
 import re
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
+
+
+@contextmanager
+def _driver(factory):
+    import diagnostics
+    with factory() as driver:
+        try:yield driver
+        finally:diagnostics.event('age.driver.stop.begin')
+    diagnostics.event('age.driver.stop.end')
 
 
 def inspect_age(url, cookies=None, log=None, cancel=None):
@@ -23,13 +33,16 @@ def inspect_age(url, cookies=None, log=None, cancel=None):
     if not channels:
         raise VideoError('AGE 动漫解析需要本机安装 Chrome 或 Edge 浏览器。')
     _say(log, 'AGE：启动浏览器并加载播放页。')
-    with sync_playwright() as playwright:
+    import diagnostics
+    diagnostics.event('age.driver.begin')
+    with _driver(sync_playwright) as playwright:
         browser = None
         for channel in channels:
             _check_cancel(cancel)
             try:
                 browser = playwright.chromium.launch(channel=channel, headless=True,
                     args=['--autoplay-policy=no-user-gesture-required'])
+                diagnostics.event('age.browser.launched',channel)
                 break
             except Exception:
                 continue
@@ -92,7 +105,9 @@ def inspect_age(url, cookies=None, log=None, cancel=None):
                 page.wait_for_timeout(700)
             raise VideoError('未取得 AGE 正片视频流，可能需要访问验证或当前线路不可用；短提示片不会作为下载结果。')
         finally:
+            cleanup_started=time.monotonic();diagnostics.event('age.browser.close.begin')
             browser.close()
+            diagnostics.event('age.browser.close.end',f'duration={time.monotonic()-cleanup_started:.3f}s')
 
 
 def download_age(info, selected, work, cookies, progress, log, cancel):

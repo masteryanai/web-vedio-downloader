@@ -49,6 +49,8 @@ def get_json(url, asset=False):
 
 
 def check_update():
+    import diagnostics
+    diagnostics.event('update.check')
     try:
         return check_api_update()
     except urllib.error.HTTPError as error:
@@ -116,6 +118,8 @@ def check_api_update():
 
 
 def prepare_update(info, cancel, progress):
+    import diagnostics
+    diagnostics.event('update.download.begin',info.get('version','unknown'))
     if not getattr(sys, 'frozen', False):
         raise RuntimeError('源码模式不能覆盖安装，请使用发布的 EXE 版本。')
     install = Path(sys.executable).resolve().parent
@@ -164,6 +168,7 @@ def prepare_update(info, cancel, progress):
         'sha256':expected['sha256'],'version':info['version'],'pid':os.getpid()}),encoding='utf-8')
     helper = plan_stage/'update_helper.ps1'
     shutil.copy2(resource_path('update_helper.ps1'),helper)
+    diagnostics.event('update.prepared',info['version'])
     return {'plan':str(plan),'helper':str(helper)}
 
 
@@ -188,7 +193,9 @@ def show_update_dialog(parent):
         @Slot()
         def run(self):
             try:self.success.emit(self.action(self.progress.emit))
-            except Exception as error:self.failure.emit(str(error)[:500])
+            except Exception as error:
+                import diagnostics
+                diagnostics.exception('update.failed',error,error.__traceback__);self.failure.emit(str(error)[:500])
             finally:self.finished.emit()
 
     class Dialog(QDialog):

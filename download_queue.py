@@ -6,6 +6,7 @@ import time
 from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
 import download_tasks as tasks
 import engine
+import diagnostics
 
 
 class Job(QObject):
@@ -22,6 +23,7 @@ class Job(QObject):
     @Slot()
     def run(self):
         task_id = self.task_id
+        diagnostics.event('queue.worker.begin',task_id)
         try:
             with tasks.lock(task_id):
                 task = tasks.load(task_id)
@@ -49,7 +51,8 @@ class Job(QObject):
                         progress, log,
                         self.cancel, task_id=task_id, lock_held=True)
                     self.result.emit(task_id, result, '')
-                except Exception:
+                except Exception as error:
+                    diagnostics.exception('queue.worker.failed',error,error.__traceback__)
                     if tasks.task_file(task_id).exists():
                         latest = tasks.load(task_id)
                         if latest['state'] not in tasks.TERMINAL:
@@ -88,6 +91,7 @@ class DownloadQueue(QObject):
         return copy.deepcopy(entry[0]) if entry and time.monotonic()-entry[1] < 300 else None
 
     def enqueue(self, task_id, cookies, info=None):
+        diagnostics.event('queue.enqueue',task_id)
         if self.stopping or task_id in self.active or any(row[0] == task_id for row in self.waiting):
             return False
         with tasks.lock(task_id):
@@ -138,6 +142,7 @@ class DownloadQueue(QObject):
 
     @Slot(str, object, str)
     def on_result(self, task_id, result, error):
+        diagnostics.event('queue.result',task_id+(': failed '+error if error else ': completed'))
         if result:
             # Keep completed rows for this session; completed files remain outside task caches.
             row = self.entries.get(task_id)
@@ -166,6 +171,7 @@ class DownloadQueue(QObject):
         self.pump()
 
     def pause(self, task_id):
+        diagnostics.event('queue.pause',task_id)
         if task_id in self.active:
             self.active[task_id][2].set()
         else:
@@ -179,6 +185,7 @@ class DownloadQueue(QObject):
         return True
 
     def discard(self, task_id):
+        diagnostics.event('queue.cancel',task_id)
         if task_id in self.active:
             self.deleting.add(task_id); self.pause(task_id); return True
         self.waiting = deque(row for row in self.waiting if row[0] != task_id)
