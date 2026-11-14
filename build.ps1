@@ -15,7 +15,7 @@ foreach ($required in @('tools\ffmpeg.exe','tools\ffprobe.exe','tools\node.exe',
 }
 & $PythonPath (Join-Path $PSScriptRoot 'site_registry.py')
 if ($LASTEXITCODE -ne 0) { throw '适配列表同步失败。' }
-& $PythonPath -m PyInstaller --noconfirm (Join-Path $PSScriptRoot 'WebVideoDownloader.spec')
+& $PythonPath -m PyInstaller --clean --noconfirm (Join-Path $PSScriptRoot 'WebVideoDownloader.spec')
 if ($LASTEXITCODE -ne 0) { throw 'Windows 打包失败。' }
 & $PythonPath (Join-Path $PSScriptRoot 'trim_bundle.py')
 if ($LASTEXITCODE -ne 0) { throw '整理发布目录失败。' }
