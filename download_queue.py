@@ -172,26 +172,30 @@ class DownloadQueue(QObject):
             self.waiting = deque(row for row in self.waiting if row[0] != task_id)
             with tasks.lock(task_id):
                 task = tasks.load(task_id)
-                if task['state'] in tasks.TERMINAL: return
+                if task['state'] in tasks.TERMINAL: return False
                 task['state'] = 'paused'; tasks.save(task)
             self.pump()
         self.changed.emit()
+        return True
 
     def discard(self, task_id):
         if task_id in self.active:
-            self.deleting.add(task_id); self.pause(task_id); return
+            self.deleting.add(task_id); self.pause(task_id); return True
         self.waiting = deque(row for row in self.waiting if row[0] != task_id)
         try:
             record=tasks.load_record(task_id)
             if record['state'] in tasks.TERMINAL:
                 self.message.emit(task_id,'任务已经结束，文件和历史记录已保留。')
+                return False
             else:
                 tasks.discard(task_id)
                 self.snapshots.pop(task_id,None);self.payloads.pop(task_id,None);self.entries.pop(task_id,None)
                 self.removed.emit(task_id)
         except Exception as error:
             self.failed.emit(task_id, '缓存删除失败：'+str(error))
+            return False
         self.pump()
+        return True
 
     def delete_record(self,task_id,clean_cache=False):
         if task_id in self.active or any(row[0]==task_id for row in self.waiting):

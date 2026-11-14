@@ -64,19 +64,41 @@ def gui_check():
             assert all(not dialog.buttons[key].isHidden() for key in ('pause','resume','cancel'))
             assert created[3]['id'] in dialog.visible # 100% while verifying is still ongoing.
             dialog.tabs.setCurrentIndex(2);assert dialog.table.rowCount()==2
-            assert not dialog.buttons['delete'].isHidden()
+            assert not dialog.buttons['clear'].isHidden() and not dialog.buttons['clear'].isEnabled()
+            dialog.table.selectRow(0)
+            with patch.object(DeleteDialog,'exec') as popup:
+                dialog.delete();popup.assert_not_called()
+            dialog.select_all.click();assert len(dialog.checked_ids)==2
+            dialog.refresh();assert len(dialog.checked_ids)==2
+            assert dialog.buttons['clear'].isEnabled()
+            dialog.select_none.click();assert not dialog.checked_ids and not dialog.buttons['clear'].isEnabled()
             dialog.tabs.setCurrentIndex(3);assert dialog.table.rowCount()==1
             dialog.tabs.setCurrentIndex(0)
             dialog.search.setText('AGE动漫');assert dialog.table.rowCount()==7
+            dialog.select_all.click();assert len(dialog.checked_ids)==7
+            assert dialog.buttons['delete'].isHidden()
+            with patch.object(queue,'pause') as pause:
+                queue.waiting.append((created[2]['id'],[]))
+                dialog.pause();assert pause.call_args.args==(created[2]['id'],)
+                queue.waiting.clear()
+            called=[]
+            def resume(task_id):
+                called.append(task_id)
+                if task_id==created[1]['id']:raise ValueError('fixture failure')
+                return True
+            dialog.resume_task=resume;dialog.resume()
+            assert set(called)=={row['id'] for row in created[:4]}
+            assert '失败 1 条' in dialog.batch_result.text() and '跳过 3 条' in dialog.batch_result.text()
+            dialog.search.setText('pending');assert not dialog.checked_ids
             dialog.search.setText('保存位置');assert dialog.table.rowCount()==1
-            dialog.table.selectRow(0)
+            dialog.table.selectRow(0);dialog.table.item(0,0).setCheckState(Qt.CheckState.Checked)
             def change_filter_during_confirmation(*_):
                 dialog.search.setText('pending-failed');dialog.refresh()
                 return QMessageBox.StandardButton.Yes
             with patch.object(QMessageBox,'question',side_effect=change_filter_during_confirmation):dialog.cancel()
             assert tasks.load_record(created[0]['id'])['state']=='cancelled'
             assert tasks.load(created[1]['id'])['state']=='failed'
-            dialog.search.setText('completed-one');settle();dialog.table.selectRow(0)
+            dialog.search.setText('completed-one');settle();dialog.table.selectRow(0);dialog.table.item(0,0).setCheckState(Qt.CheckState.Checked)
             assert dialog.buttons['delete'].isEnabled() and not dialog.buttons['resume'].isEnabled()
             selected=dialog.selected()['id'];dialog.refresh()
             assert dialog.selected()['id']==selected and dialog.search.text()=='completed-one'
@@ -86,13 +108,13 @@ def gui_check():
             if screenshot:dialog.grab().save(str(Path(screenshot).with_stem(Path(screenshot).stem+'-wide')))
             def select_other(choice):
                 assert choice.record_only.isChecked() and not choice.with_cache.isChecked()
-                dialog.search.setText('completed-two');dialog.refresh();dialog.table.selectRow(0)
+                dialog.search.setText('completed-two');dialog.refresh();dialog.table.selectRow(0);dialog.table.item(0,0).setCheckState(Qt.CheckState.Checked)
                 return QDialog.DialogCode.Accepted
             with patch.object(DeleteDialog,'exec',new=select_other):dialog.delete()
             assert not tasks.history_file(selected).exists()
             assert tasks.load_record(created[5]['id'])['state']=='completed'
             # Exercise actual modal cancellation and the second deletion choice.
-            dialog.search.setText('completed-two');settle();dialog.table.selectRow(0)
+            dialog.search.setText('completed-two');settle();dialog.table.selectRow(0);dialog.table.item(0,0).setCheckState(Qt.CheckState.Checked)
             cache=tasks.work_path(created[5]);cache.mkdir(parents=True);(cache/'source.part').write_bytes(b'cache')
             def close_choice():
                 choice=app.activeModalWidget();assert isinstance(choice,DeleteDialog)
@@ -102,7 +124,7 @@ def gui_check():
             QTimer.singleShot(40,close_choice);dialog.delete()
             assert tasks.history_file(created[5]['id']).exists() and cache.exists()
             # Keep this fixture for the restart check; use the cancelled row for clean-cache deletion.
-            dialog.search.setText('cancelled');settle();dialog.table.selectRow(0)
+            dialog.search.setText('cancelled');settle();dialog.table.selectRow(0);dialog.table.item(0,0).setCheckState(Qt.CheckState.Checked)
             cancelled_cache=tasks.work_path(created[6]);cancelled_cache.mkdir(parents=True)
             (cancelled_cache/'source.part').write_bytes(b'cache')
             def clean_choice():
@@ -115,6 +137,19 @@ def gui_check():
             code="import json,sys;from pathlib import Path;import download_tasks as t;t.directory=lambda:Path(sys.argv[1]);r=t.records();print(json.dumps([sum(x['state'] in ('queued','running','paused','failed') for x in r),sum(x['state']=='completed' for x in r),sum(x['state']=='cancelled' for x in r)]))"
             counts=json.loads(subprocess.check_output([sys.executable,'-c',code,str(registry)],text=True,encoding='utf-8'))
             assert counts==[3,1,1],counts
+            # A batch clear only removes checked completed records, preserving unselected files.
+            extras=[]
+            for n in range(3):
+                task=tasks.create({'url':f'https://example.com/bulk/{n}','site':'AGE动漫','title':f'bulk-{n}'},'source',str(root/'out'))
+                task['state']='completed';tasks.save(task);tasks.finish(task);extras.append(task)
+            dialog.search.clear();dialog.tabs.setCurrentIndex(2);dialog.refresh()
+            for i in range(dialog.table.rowCount()):
+                item=dialog.table.item(i,0)
+                if item.data(Qt.ItemDataRole.UserRole) in {row['id'] for row in extras[:2]}:item.setCheckState(Qt.CheckState.Checked)
+            assert len(dialog.checked_ids)==2
+            with patch.object(DeleteDialog,'exec',return_value=QDialog.DialogCode.Accepted):dialog.buttons['clear'].click()
+            assert all(not tasks.history_file(row['id']).exists() for row in extras[:2])
+            assert tasks.history_file(extras[2]['id']).exists() and all(video.exists() for video in outputs)
             dialog.close();settle()
     print('Task dialog layout/search/grouping/ID actions/history restart: PASS')
 

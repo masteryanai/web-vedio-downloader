@@ -127,6 +127,7 @@ def gui(args: argparse.Namespace) -> int:
             self.task_kind = ""
             self.last_result = None
             self.browser_dialog = None
+            self.resume_pending=[];self.resume_browser=None;self.resume_browser_id=None
             self.browser_result = None
             self.accounts = AccountManager(self)
             self.accounts.changed.connect(self.account_changed)
@@ -313,7 +314,7 @@ def gui(args: argparse.Namespace) -> int:
             outer.addWidget(content, 1)
 
         def is_busy(self):
-            return self.active_thread is not None or self.browser_dialog is not None
+            return self.active_thread is not None or self.browser_dialog is not None or self.resume_browser is not None
 
         def refresh_buttons(self):
             busy = self.is_busy() or self.close_when_idle
@@ -379,26 +380,59 @@ def gui(args: argparse.Namespace) -> int:
             if self.task_dialog:
                 self.task_dialog.show();self.task_dialog.raise_();return
             from task_view import TaskDialog
-            dialog=TaskDialog(self.queue,self.resume_task,self);self.task_dialog=dialog
+            dialog=TaskDialog(self.queue,lambda task_id:self.resume_task(task_id,report_error=False),self);self.task_dialog=dialog
             def closed(_):self.task_dialog=None
             dialog.finished.connect(closed);dialog.show()
 
-        def resume_task(self, task_id):
-            if self.close_when_idle:return
-            if task_id in self.queue.completed_rows: return
-            if task_id in self.queue.active or any(row[0]==task_id for row in self.queue.waiting): return
+        def resume_task(self, task_id, report_error=True):
+            if self.close_when_idle:return False
+            if task_id in self.queue.active or any(row[0]==task_id for row in self.queue.waiting):return False
             try:
                 task=tasks.load_record(task_id)
-                if task['state'] in tasks.TERMINAL:return
+                if task['state'] in tasks.TERMINAL:return False
                 if task['site']=='抖音' and self.queue.cached(task_id) is None:
-                    if self.is_busy():
-                        QMessageBox.information(self,'请先完成解析','这条抖音任务需要在官方页面刷新信息，请稍后继续。');return
-                    self.url_input.setPlainText(task['url']);self.resume_task_id=task_id
-                    self.resume_after_inspect=True;self.inspect();return
+                    if task_id in self.resume_pending or task_id==self.resume_browser_id:return False
+                    self.resume_pending.append(task_id)
+                    QTimer.singleShot(0,self.start_resume_verification)
+                    return True
                 cookies=self.accounts.cookies_for(task['site']) if task['site'] in SITES else []
-                self.queue.enqueue(task_id,cookies)
+                accepted=self.queue.enqueue(task_id,cookies)
                 self.current_task_id=task_id;self.refresh_buttons()
-            except Exception as error: QMessageBox.warning(self,'无法恢复任务',str(error))
+                return accepted
+            except Exception as error:
+                if not report_error:raise
+                QMessageBox.warning(self,'无法恢复任务',str(error));return False
+
+        def start_resume_verification(self):
+            if self.close_when_idle or self.resume_browser is not None:return
+            if self.is_busy():
+                QTimer.singleShot(500,self.start_resume_verification);return
+            while self.resume_pending:
+                task_id=self.resume_pending.pop(0)
+                try:
+                    task=tasks.load_record(task_id)
+                    if task['state'] in tasks.TERMINAL:continue
+                    from douyin_browser import DouyinCapture
+                    from engine import _extract_url
+                    dialog=DouyinCapture(self.accounts._profile('抖音'),_extract_url(task['url']),self)
+                    self.resume_browser=dialog;self.resume_browser_id=task_id;result=[]
+                    dialog.captured.connect(result.append)
+                    def finished(_,task_id=task_id,result=result,dialog=dialog):
+                        self.resume_browser=None;self.resume_browser_id=None
+                        try:
+                            task=tasks.load_record(task_id)
+                            if not self.close_when_idle and task['state'] not in tasks.TERMINAL:
+                                if not result:raise ValueError('已取消网页验证；任务保留，可重新继续。')
+                                info=result[-1]
+                                if not any(row['id']==task['format_id'] for row in info['formats']):
+                                    raise ValueError('原任务画质已不可用，请重新解析。')
+                                self.accounts._import_current('抖音','抖音' in self.accounts._remembered)
+                                self.queue.enqueue(task_id,self.accounts.cookies_for('抖音'),info)
+                        except Exception as error:self.queue.failed.emit(task_id,str(error))
+                        dialog.deleteLater();self.refresh_buttons();self.maybe_close()
+                        QTimer.singleShot(0,self.start_resume_verification)
+                    dialog.finished.connect(finished);dialog.show();self.refresh_buttons();return
+                except Exception as error:self.queue.failed.emit(task_id,str(error))
 
         def show_supported(self):
             dialog = QDialog(self)
@@ -446,7 +480,7 @@ def gui(args: argparse.Namespace) -> int:
             dialog.exec()
 
         def check_updates(self):
-            if self.is_busy() or self.queue.active or self.queue.waiting:
+            if self.is_busy() or self.queue.active or self.queue.waiting or self.resume_pending:
                 QMessageBox.information(self, "请先完成当前任务", "下载或解析结束后再安装更新。")
                 return
             from updater import show_update_dialog
@@ -619,6 +653,8 @@ def gui(args: argparse.Namespace) -> int:
 
         @Slot(str)
         def queue_removed(self,task_id):
+            self.resume_pending=[key for key in self.resume_pending if key!=task_id]
+            if self.resume_browser_id==task_id:self.resume_browser.reject()
             if task_id==self.current_task_id:
                 self.current_task_id=None
                 if not self.is_busy():
@@ -708,6 +744,7 @@ def gui(args: argparse.Namespace) -> int:
             if self.is_busy():
                 self.cancel_event.set()
                 if self.browser_dialog is not None: self.browser_dialog.reject()
+                if self.resume_browser is not None:self.resume_browser.reject()
                 self.refresh_buttons();return
             task_id=self.current_task_id
             if not task_id: return
@@ -715,6 +752,9 @@ def gui(args: argparse.Namespace) -> int:
             else:self.resume_task(task_id)
 
         def closeEvent(self,event):
+            self.resume_pending.clear()
+            if self.resume_browser is not None:
+                self.close_when_idle=True;self.resume_browser.reject()
             if self.is_busy() or self.queue.active or self.queue.waiting:
                 self.close_when_idle=True
                 self.queue.shutdown()

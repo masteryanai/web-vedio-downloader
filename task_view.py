@@ -43,7 +43,7 @@ class TaskDialog(QDialog):
     def __init__(self,queue,resume,parent=None):
         super().__init__(parent)
         self.queue=queue;self.resume_task=resume;self.all_rows=[];self.visible={};self.path_widths={}
-        self.fit_pending=False;self.closing=False
+        self.fit_pending=False;self.closing=False;self.checked_ids=set()
         self.setWindowTitle('下载任务');self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         layout=QVBoxLayout(self)
         self.summary=QLabel();self.summary.setWordWrap(True);layout.addWidget(self.summary)
@@ -66,14 +66,22 @@ class TaskDialog(QDialog):
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.viewport().installEventFilter(self);layout.addWidget(table)
+        selection=QHBoxLayout()
+        self.select_all=QPushButton('全选');self.select_none=QPushButton('全不选');self.check_count=QLabel()
+        self.select_all.clicked.connect(lambda:self.set_checks(True))
+        self.select_none.clicked.connect(lambda:self.set_checks(False))
+        selection.addWidget(self.select_all);selection.addWidget(self.select_none);selection.addWidget(self.check_count);selection.addStretch()
+        layout.addLayout(selection)
+        self.batch_result=QLabel();self.batch_result.setWordWrap(True);layout.addWidget(self.batch_result)
         controls=QHBoxLayout();self.buttons={}
         for key,text,action in (('pause','暂停所选任务',self.pause),('resume','继续所选任务',self.resume),
-                                ('cancel','取消下载',self.cancel),('delete','删除…',self.delete)):
+                                ('cancel','取消所选下载',self.cancel),('delete','删除所选记录…',self.delete),('clear','清除下载记录',self.delete)):
             button=QPushButton(text);button.clicked.connect(action);controls.addWidget(button);self.buttons[key]=button
         layout.addLayout(controls)
         table.itemSelectionChanged.connect(self.update_actions)
-        self.tabs.currentChanged.connect(lambda _:self.render(reset_scroll=True))
-        self.search.textChanged.connect(lambda _:self.render(reset_scroll=True))
+        table.itemChanged.connect(self.check_changed)
+        self.tabs.currentChanged.connect(lambda _:self.filter_changed())
+        self.search.textChanged.connect(lambda _:self.filter_changed())
         self.timer=QTimer(self);self.timer.setInterval(500);self.timer.timeout.connect(self.refresh)
         self.timer.start();self.resize(1100,520);self.refresh()
 
@@ -115,6 +123,7 @@ class TaskDialog(QDialog):
         group=self.tabs.currentIndex();query=self.search.text()
         rows=[row for row in self.all_rows if matches(row,group,query)]
         old_ids=list(self.visible);ids=[row['id'] for row in rows]
+        self.checked_ids.intersection_update(ids)
         scroll=0 if reset_scroll else self.table.horizontalScrollBar().value()
         vertical=0 if reset_scroll else self.table.verticalScrollBar().value()
         with QSignalBlocker(self.table):
@@ -129,7 +138,10 @@ class TaskDialog(QDialog):
                     if item is None:item=QTableWidgetItem();self.table.setItem(i,j,item)
                     item.setText(value.replace('\r',' ').replace('\n',' ') if j==0 else value)
                     item.setToolTip(value)
-                    if j==0:item.setData(Qt.ItemDataRole.UserRole,task['id'])
+                    if j==0:
+                        item.setData(Qt.ItemDataRole.UserRole,task['id'])
+                        item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable)
+                        item.setCheckState(Qt.CheckState.Checked if task['id'] in self.checked_ids else Qt.CheckState.Unchecked)
                 cell=self.table.cellWidget(i,1)
                 if cell is None:
                     cell=QWidget();box=QVBoxLayout(cell);box.setContentsMargins(3,0,3,0)
@@ -147,48 +159,82 @@ class TaskDialog(QDialog):
         self.update_actions()
         if ids!=old_ids or not old_ids:self.schedule_fit()
 
+    def filter_changed(self):
+        self.checked_ids.clear();self.render(reset_scroll=True)
+
+    def check_changed(self,item):
+        if item.column()!=0:return
+        task_id=item.data(Qt.ItemDataRole.UserRole)
+        if item.checkState()==Qt.CheckState.Checked:self.checked_ids.add(task_id)
+        else:self.checked_ids.discard(task_id)
+        self.update_actions()
+
+    def set_checks(self,checked):
+        self.checked_ids=set(self.visible) if checked else set()
+        self.render()
+
+    def checked(self):
+        return [row for key,row in self.visible.items() if key in self.checked_ids]
+
+    def eligible(self,task,action):
+        task_id=task['id'];terminal=task['state'] in tasks.TERMINAL
+        busy=task_id in self.queue.active or any(row[0]==task_id for row in self.queue.waiting)
+        return {'pause':not terminal and busy,'resume':not terminal and not busy,
+                'cancel':not terminal,'delete':terminal and not busy}[action]
+
     def update_actions(self):
-        task=self.selected();state=task['state'] if task else None
-        task_id=task['id'] if task else None
-        active=task_id in self.queue.active
-        queued=any(row[0]==task_id for row in self.queue.waiting)
-        self.buttons['pause'].setEnabled(bool(task) and state not in tasks.TERMINAL and (active or queued))
-        self.buttons['resume'].setEnabled(bool(task) and state not in tasks.TERMINAL and not active and not queued)
-        self.buttons['cancel'].setEnabled(bool(task) and state not in tasks.TERMINAL)
-        self.buttons['delete'].setEnabled(bool(task) and state in tasks.TERMINAL and not active and not queued)
-        self.buttons['delete'].setVisible(self.tabs.currentIndex() in (2,3) or (self.tabs.currentIndex()==0 and state in tasks.TERMINAL))
+        rows=self.checked();group=self.tabs.currentIndex()
+        self.check_count.setText(f'已勾选 {len(rows)} 条（仅当前列表）')
+        self.select_all.setEnabled(bool(self.visible));self.select_none.setEnabled(bool(rows))
+        for action in ('pause','resume','cancel','delete'):
+            self.buttons[action].setEnabled(any(self.eligible(row,action) for row in rows))
+        self.buttons['delete'].setVisible(group==3 or (group==0 and bool(rows) and all(row['state'] in tasks.TERMINAL for row in rows)))
+        self.buttons['clear'].setVisible(group==2)
+        self.buttons['clear'].setEnabled(bool(rows) and any(self.eligible(row,'delete') for row in rows))
+
+    def targets(self,action):
+        rows=self.checked()
+        return [row['id'] for row in rows if self.eligible(row,action)],sum(not self.eligible(row,action) for row in rows)
+
+    def apply_batch(self,action,ids,skipped,clean_cache=False):
+        submitted=failed=0;errors=[]
+        for task_id in ids:
+            try:
+                # Recheck state, but never add a task to the captured target IDs.
+                row=tasks.load_record(task_id)
+                if not self.eligible(row,action):skipped+=1;continue
+                if action=='resume':result=self.resume_task(task_id)
+                elif action=='delete':result=self.queue.delete_record(task_id,clean_cache=clean_cache)
+                else:result=getattr(self.queue,'discard' if action=='cancel' else action)(task_id)
+                if result is False:
+                    if action=='cancel':failed+=1
+                    else:skipped+=1
+                else:submitted+=1
+            except Exception as error:
+                failed+=1;errors.append(str(error))
+        self.batch_result.setText(f'已提交 {submitted} 条，跳过 {skipped} 条，失败 {failed} 条。'+('；'.join(errors[:3]) if errors else '最终处理状态见任务列表。'))
+        self.refresh()
 
     def pause(self):
-        task=self.selected()
-        if task:
-            try:self.queue.pause(task['id'])
-            except Exception as error:QMessageBox.warning(self,'无法暂停',str(error))
-        self.refresh()
+        ids,skipped=self.targets('pause');self.apply_batch('pause',ids,skipped)
 
     def resume(self):
-        task=self.selected()
-        if task:self.resume_task(task['id'])
-        self.refresh()
+        ids,skipped=self.targets('resume');self.apply_batch('resume',ids,skipped)
 
     def cancel(self):
-        task=self.selected()
-        if not task:return
-        task_id=task['id']
-        if QMessageBox.question(self,'取消下载','停止所选任务并清理缓存？取消记录会保留，已完成的文件不会删除。')==QMessageBox.StandardButton.Yes:
-            self.queue.discard(task_id)
-        self.refresh()
+        ids,skipped=self.targets('cancel')
+        if not ids:return
+        if QMessageBox.question(self,'取消下载',f'停止勾选的 {len(ids)} 条任务并清理缓存？另跳过 {skipped} 条。取消记录会保留，已完成的文件不会删除。')==QMessageBox.StandardButton.Yes:
+            self.apply_batch('cancel',ids,skipped)
 
     def delete(self):
-        task=self.selected()
-        if not task:return
-        task_id=task['id']
-        if task['state'] not in tasks.TERMINAL:return
+        ids,skipped=self.targets('delete')
+        if not ids:return
         choice=DeleteDialog(self)
+        choice.setWindowTitle(f'删除 {len(ids)} 条历史记录（跳过 {skipped} 条）')
         if choice.exec()==QDialog.DialogCode.Accepted:
-            try:self.queue.delete_record(task_id,clean_cache=choice.with_cache.isChecked())
-            except Exception as error:QMessageBox.warning(self,'无法删除记录',str(error))
+            self.apply_batch('delete',ids,skipped,choice.with_cache.isChecked())
         choice.deleteLater()
-        self.refresh()
 
     def closeEvent(self,event):
         self.closing=True;self.timer.stop();super().closeEvent(event)
