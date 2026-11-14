@@ -161,7 +161,7 @@ def check_update():
         app=QApplication.instance();window=next(w for w in app.topLevelWidgets() if type(w).__name__=='Window');windows.append(window)
         window.desktop.save(close_action='hide')
         def click():
-            dialog=app.activeModalWidget()
+            dialog=next((w for w in app.topLevelWidgets() if type(w).__name__=='UpdateCenter' and w.isVisible()),None)
             if dialog and hasattr(dialog,'install') and dialog.install.isEnabled():dialog.install.click()
         timer=QTimer();timer.setInterval(20);timer.timeout.connect(click);timer.start();timers.append(timer)
         QTimer.singleShot(20,window.check_updates);QTimer.singleShot(5000,app.quit)

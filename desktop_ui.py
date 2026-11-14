@@ -49,6 +49,9 @@ class SettingsDialog(QDialog):
         self.auto_hide=QCheckBox('靠近左右边缘时自动收起');self.auto_hide.setChecked(cfg['float_auto_hide']);layout.addWidget(self.auto_hide)
         row=QHBoxLayout();row.addWidget(QLabel('悬浮框不透明度'))
         self.opacity=QSpinBox();self.opacity.setRange(20,100);self.opacity.setSuffix('%');self.opacity.setValue(cfg['float_opacity']);row.addWidget(self.opacity);layout.addLayout(row)
+        self.auto_check=QCheckBox('自动检查更新（只提示，不自动下载安装）');self.auto_check.setChecked(cfg['auto_check_updates']);layout.addWidget(self.auto_check)
+        row=QHBoxLayout();row.addWidget(QLabel('检查间隔（小时）'))
+        self.check_interval=QSpinBox();self.check_interval.setRange(1,168);self.check_interval.setValue(cfg['update_interval_hours']);row.addWidget(self.check_interval);layout.addLayout(row)
         note=QLabel('悬浮框每 3 秒轮播概况与正在传输的任务。\n降低并行上限不会中断正在运行的任务。');note.setWordWrap(True);layout.addWidget(note)
         self.error=QLabel();self.error.setWordWrap(True);layout.addWidget(self.error)
         save=QPushButton('保存');save.clicked.connect(self.apply);layout.addWidget(save)
@@ -59,7 +62,7 @@ class SettingsDialog(QDialog):
     def apply(self):
         try:
             self.desktop.save(parallel_downloads=self.count.value(),close_action=self.close_action.currentData(),
-                float_enabled=self.enabled.isChecked(),float_auto_hide=self.auto_hide.isChecked(),float_opacity=self.opacity.value())
+                float_enabled=self.enabled.isChecked(),float_auto_hide=self.auto_hide.isChecked(),float_opacity=self.opacity.value(),auto_check_updates=self.auto_check.isChecked(),update_interval_hours=self.check_interval.value())
             self.accept()
         except Exception as error:self.error.setText('设置未保存：'+diagnostics.redact(str(error)))
 
@@ -217,7 +220,7 @@ class DesktopController(QObject):
         self.tray.show()
         if not self.tray.isVisible():return False
         self.hidden_windows=[]
-        for name in ('task_dialog','accounts_dialog','diagnostic_dialog','browser_dialog','resume_browser'):
+        for name in ('task_dialog','accounts_dialog','diagnostic_dialog','update_dialog','browser_dialog','resume_browser'):
             widget=getattr(self.window,name,None)
             if widget and widget.isVisible():self.hidden_windows.append(widget);widget.hide()
         self.was_maximized=self.window.isMaximized();self.hidden=True;self.window.hide();diagnostics.event('desktop.hidden');return True

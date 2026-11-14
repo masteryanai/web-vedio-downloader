@@ -5,12 +5,13 @@ import uuid
 from runtime import app_data_dir
 
 DEFAULTS={'parallel_downloads':5,'close_action':'ask','float_enabled':False,
-          'float_opacity':85,'float_auto_hide':True,'float_position':None,'float_edge':''}
+          'float_opacity':85,'float_auto_hide':True,'float_position':None,'float_edge':'','auto_check_updates':True,'update_interval_hours':4}
 
 def valid(key,value):
     if key=='parallel_downloads':return type(value) is int and 1<=value<=10
     if key=='close_action':return value in ('ask','hide','exit')
-    if key in ('float_enabled','float_auto_hide'):return type(value) is bool
+    if key in ('float_enabled','float_auto_hide','auto_check_updates'):return type(value) is bool
+    if key=='update_interval_hours':return type(value) is int and 1<=value<=168
     if key=='float_opacity':return type(value) is int and 20<=value<=100
     if key=='float_position':return value is None or isinstance(value,list) and len(value)==2 and all(type(v) is int and abs(v)<=100000 for v in value)
     if key=='float_edge':return value in ('','left','right')

@@ -89,7 +89,7 @@ def check_public_update():
         validate_manifest(manifest,tag)
         return {'available':True,'manifest':manifest,'version':manifest['version'],
                 'url':PREFIX+tag+'/'+manifest['asset'],
-                'notes':'GitHub API 暂不可用，已改用公开发布页检查更新，无需认证。\n发布说明：'+TAGS+tag}
+                'notes':manifest.get('notes') or 'GitHub API 暂不可用，已改用公开发布页检查更新，无需认证。\n发布说明：'+TAGS+tag}
     except urllib.error.HTTPError as error:
         error.close()
         if error.code==404:
@@ -118,6 +118,9 @@ def check_api_update():
 
 
 def prepare_update(info, cancel, progress):
+    if info.get('manifest',{}).get('schema')==2:
+        from update_package import prepare
+        return prepare(info,cancel,progress)
     import diagnostics
     diagnostics.event('update.download.begin',info.get('version','unknown'))
     if not getattr(sys, 'frozen', False):
@@ -179,84 +182,7 @@ def launch_update(prepared):
 
 
 def show_update_dialog(parent):
-    from PySide6.QtCore import QObject,QThread,Signal,Slot
-    from PySide6.QtWidgets import QDialog,QVBoxLayout,QLabel,QPlainTextEdit,QPushButton,QProgressBar,QApplication
-    import threading
-
-    class Job(QObject):
-        success=Signal(object)
-        failure=Signal(str)
-        progress=Signal(object)
-        finished=Signal()
-        def __init__(self, action):
-            super().__init__();self.action=action
-        @Slot()
-        def run(self):
-            try:self.success.emit(self.action(self.progress.emit))
-            except Exception as error:
-                import diagnostics
-                diagnostics.exception('update.failed',error,error.__traceback__);self.failure.emit(str(error)[:500])
-            finally:self.finished.emit()
-
-    class Dialog(QDialog):
-        def __init__(self):
-            super().__init__(parent);self.setWindowTitle('检查更新');self.resize(620,440)
-            self.thread=None;self.job=None;self.info=None;self.prepared=None;self.cancel=threading.Event();self.closing=False
-            layout=QVBoxLayout(self);self.label=QLabel(f'当前版本 {APP_VERSION}，正在检查更新…');self.label.setWordWrap(True);layout.addWidget(self.label)
-            self.notes=QPlainTextEdit();self.notes.setReadOnly(True);layout.addWidget(self.notes)
-            self.bar=QProgressBar();self.bar.setRange(0,0);layout.addWidget(self.bar)
-            self.install=QPushButton('下载并安装更新');self.install.setEnabled(False);self.install.clicked.connect(self.download);layout.addWidget(self.install)
-            page=QPushButton('打开发布页');layout.addWidget(page)
-            def open_page():
-                from PySide6.QtCore import QUrl
-                from PySide6.QtGui import QDesktopServices
-                QDesktopServices.openUrl(QUrl(LATEST))
-            page.clicked.connect(open_page)
-            self.stop=QPushButton('关闭');self.stop.clicked.connect(self.close);layout.addWidget(self.stop)
-            self.start(lambda progress:check_update(),self.checked)
-        def start(self,action,success):
-            self.thread=QThread(self);self.job=Job(action);self.job.moveToThread(self.thread)
-            self.thread.started.connect(self.job.run);self.job.success.connect(success);self.job.failure.connect(self.failed)
-            self.job.progress.connect(self.transfer_progress);self.job.finished.connect(self.thread.quit);self.job.finished.connect(self.job.deleteLater)
-            self.thread.finished.connect(self.done_job);self.thread.finished.connect(self.thread.deleteLater);self.thread.start()
-        def transfer_progress(self,value):
-            if isinstance(value,int):self.bar.setValue(value);return
-            self.bar.setValue(value['percent'])
-            detail=value['stage']
-            if 'total' in value:
-                detail+=f" · {value['bytes']/1048576:.1f} / {value['total']/1048576:.1f} MiB"
-                detail+=f" · {value.get('speed',0)/1048576:.2f} MiB/s"
-            self.label.setText(detail)
-
-        def checked(self,info):
-            self.info=info;self.bar.setRange(0,100);self.bar.setValue(0)
-            self.label.setText(f'发现新版本 {info["version"]}。安装时会关闭当前程序并保留旧版备份。' if info['available'] else info['message'])
-            self.notes.setPlainText(info.get('notes',''))
-        def done_job(self):
-            self.thread=None;self.job=None
-            if self.prepared and not self.cancel.is_set() and not self.closing:
-                try:launch_update(self.prepared)
-                except Exception as error:self.failed(error);return
-                if hasattr(parent,'request_exit'):parent.request_exit()
-                else:parent.close();QApplication.instance().quit()
-                return
-            self.install.setEnabled(bool(self.info and self.info.get('available')))
-            if self.closing:self.close()
-        def download(self):
-            self.install.setEnabled(False);self.stop.setText('取消并关闭');self.cancel.clear()
-            self.label.setText('正在下载更新包，完成校验后将退出并更新。');self.bar.setRange(0,100)
-            self.start(lambda progress:prepare_update(self.info,self.cancel,progress),self.ready)
-        def ready(self,result):
-            if self.cancel.is_set():return
-            self.prepared=result;self.bar.setValue(100);self.label.setText('校验完成，正在退出并安装更新…')
-        def failed(self,error):self.label.setText('更新未完成：'+str(error));self.bar.setRange(0,100)
-        def reject(self):
-            if self.thread is not None:
-                self.closing=True;self.cancel.set();self.label.setText('正在停止更新请求…')
-            else:super().reject()
-        def closeEvent(self,event):
-            if self.thread is not None:
-                self.closing=True;self.cancel.set();self.label.setText('正在停止更新请求…');event.ignore()
-            else:
-                self.done(QDialog.DialogCode.Rejected);event.accept()
-    Dialog().exec()
+    from update_center import UpdateCenter
+    dialog=UpdateCenter(parent)
+    dialog.start(lambda progress:check_update(),dialog.receive)
+    dialog.exec()

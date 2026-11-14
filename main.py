@@ -80,6 +80,8 @@ def cli(args: argparse.Namespace) -> int:
 def gui(args: argparse.Namespace) -> int:
     if args.smoke_ui and os.name != "nt":
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from update_bootstrap import ensure_maintenance
+    ensure_maintenance()
     from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot, QUrl
     from PySide6.QtGui import QDesktopServices, QFont
     from PySide6.QtWidgets import (
@@ -153,6 +155,11 @@ def gui(args: argparse.Namespace) -> int:
             self._build()
             from desktop_ui import DesktopController
             self.desktop=DesktopController(self,self.queue)
+            from update_scheduler import UpdateScheduler
+            self.update_scheduler=UpdateScheduler(self)
+            from update_bootstrap import previous_failure
+            update_problem=previous_failure()
+            if update_problem:self.append_log(update_problem)
             unfinished = tasks.pending()
             if unfinished:
                 self.status_text.setText(f"有 {len(unfinished)} 个未完成任务，可在“下载任务”中继续")
@@ -180,7 +187,7 @@ def gui(args: argparse.Namespace) -> int:
             self.account_button.setObjectName("sideButton")
             self.account_button.clicked.connect(self.show_accounts)
             left.addWidget(self.account_button)
-            update_button = QPushButton("检查更新")
+            self.update_button = update_button = QPushButton("检查更新")
             update_button.setObjectName("sideButton")
             update_button.clicked.connect(self.check_updates)
             left.addWidget(update_button)
@@ -492,11 +499,7 @@ def gui(args: argparse.Namespace) -> int:
             dialog.exec()
 
         def check_updates(self):
-            if self.is_busy() or self.queue.active or self.queue.waiting or self.resume_pending or (self.diagnostic_dialog and self.diagnostic_dialog.thread is not None):
-                QMessageBox.information(self, "请先完成当前任务", "下载或解析结束后再安装更新。")
-                return
-            from updater import show_update_dialog
-            show_update_dialog(self)
+            self.update_scheduler.manual()
 
         def show_accounts(self):
             if self.accounts_dialog is None:
@@ -782,6 +785,8 @@ def gui(args: argparse.Namespace) -> int:
                 self.queue.shutdown()
                 if self.is_busy(): self.cancel()
                 event.ignore();self.maybe_close();return
+            if not self.update_scheduler.shutdown():
+                QTimer.singleShot(100,self.close);event.ignore();return
             if self.task_dialog:self.task_dialog.close()
             if self.accounts_dialog:self.accounts_dialog.close()
             if self.diagnostic_dialog:self.diagnostic_dialog.close()

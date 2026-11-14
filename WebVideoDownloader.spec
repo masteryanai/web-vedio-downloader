@@ -7,6 +7,7 @@ root = Path(SPECPATH)
 datas = [
     (str(root / "sites.json"), "."),
     (str(root / "update_helper.ps1"), "."),
+    *[(str(root/name),".") for name in ("update_install.ps1","recovery.ps1","recovery.cmd","recovery-root.cmd")],
     (str(root / "tools"), "tools"),
     (str(root / "vendor"), "vendor"),
     (str(root / "licenses"), "licenses"),

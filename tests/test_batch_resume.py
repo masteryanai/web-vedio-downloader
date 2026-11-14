@@ -41,8 +41,8 @@ def check():
             for task in made:assert window.resume_task(task['id'],False)
             assert not window.resume_task(made[0]['id'],False)
             app.processEvents();assert len(captures)==1
-            with patch.object(QMessageBox,'information') as notice:
-                window.check_updates();notice.assert_called_once()
+            with patch.object(window.update_scheduler,'manual') as check_updates:
+                window.check_updates();check_updates.assert_called_once()
             assert not window.close_when_idle and len(window.resume_pending)==2 and window.resume_browser is captures[0]
             captures[0].captured.emit({'formats':[{'id':'source'}]});captures[0].accept()
             app.processEvents();assert len(captures)==2 and len(accepted)==1
