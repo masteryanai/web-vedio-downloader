@@ -6,6 +6,24 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,
     QPushButton,QMessageBox,QStyledItemDelegate,QWidget,QRadioButton,QDialogButtonBox)
 import download_tasks as tasks
 
+# Fixed application messages form the stable default width. Variable source logs
+# (titles, extractor details, errors) use the same cell clipping and tooltip.
+TASK_STATES={'queued':'排队中','paused':'已暂停','failed':'失败，待处理','completed':'已完成','cancelled':'已取消'}
+STATUS_SHORTCUTS={'AGE：连接视频源，确认已下载进度。':'确认已下载进度'}
+STATUS_TEXTS=tuple(TASK_STATES.values())+(
+    '准备中','其他窗口运行或上次中断','准备媒体地址','重新解析媒体地址',
+    '确认已下载进度','下载中','续传中','下载文件已就绪',
+    '源站未提供可靠续传标识，重新下载当前文件','源文件变化或不支持续传，重新下载当前文件',
+    '检查已下载的媒体信息','校验视频完整性','无损封装为 MP4','下载央视视频',
+    '处理已下载的央视分片','下载音视频文件','合并或处理音视频文件','下载完成',
+    '打包原图','处理图文画面','合成带配乐的视频',
+    'AGE：启动浏览器并加载播放页。','AGE：播放器元数据不足，正在探测正片信息。',
+    'AGE：媒体地址已失效，正在刷新一次。',
+    '央视高清处理组件报告错误；将检查处理结果。',
+    '正在获取央视原始高清流并进行专用媒体处理。','正在下载好看视频原始媒体文件。',
+    '下载已完成，正在核对分辨率、时长并解码全片。','视频已通过完整性校验并保存。',
+)
+
 
 def group_of(task):
     return {'completed':2,'cancelled':3}.get(task['state'],1)
@@ -16,10 +34,16 @@ def matches(task,group,query):
         str(task.get(key,'')) for key in ('title','site','output')).casefold()
 
 
-class TitleDelegate(QStyledItemDelegate):
+class ElidingDelegate(QStyledItemDelegate):
     def initStyleOption(self,option,index):
         super().initStyleOption(option,index)
         option.textElideMode=Qt.TextElideMode.ElideRight
+
+    def paint(self,painter,option,index):
+        painter.save()
+        painter.setClipRect(option.rect,Qt.ClipOperation.IntersectClip)
+        super().paint(painter,option,index)
+        painter.restore()
 
 
 class DeleteDialog(QDialog):
@@ -42,8 +66,8 @@ class DeleteDialog(QDialog):
 class TaskDialog(QDialog):
     def __init__(self,queue,resume,parent=None):
         super().__init__(parent)
-        self.queue=queue;self.resume_task=resume;self.all_rows=[];self.visible={};self.path_widths={}
-        self.fit_pending=False;self.closing=False;self.checked_ids=set()
+        self.queue=queue;self.resume_task=resume;self.all_rows=[];self.visible={}
+        self.fit_pending=False;self.closing=False;self.checked_ids=set();self.status_default_width=None
         self.setWindowTitle('下载任务');self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         layout=QVBoxLayout(self)
         self.summary=QLabel();self.summary.setWordWrap(True);layout.addWidget(self.summary)
@@ -58,14 +82,15 @@ class TaskDialog(QDialog):
         table.horizontalHeader().setStretchLastSection(False)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         table.setWordWrap(False);table.setTextElideMode(Qt.TextElideMode.ElideNone)
-        table.setItemDelegateForColumn(0,TitleDelegate(table))
+        table.setItemDelegateForColumn(0,ElidingDelegate(table))
+        table.setItemDelegateForColumn(3,ElidingDelegate(table))
         table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         table.verticalHeader().setDefaultSectionSize(32)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.viewport().installEventFilter(self);layout.addWidget(table)
+        table.viewport().installEventFilter(self);table.installEventFilter(self);layout.addWidget(table)
         selection=QHBoxLayout()
         self.select_all=QPushButton('全选');self.select_none=QPushButton('全不选');self.check_count=QLabel()
         self.select_all.clicked.connect(lambda:self.set_checks(True))
@@ -88,6 +113,8 @@ class TaskDialog(QDialog):
     def eventFilter(self,watched,event):
         if watched==self.table.viewport() and event.type()==QEvent.Type.Resize:
             self.schedule_fit()
+        if watched==self.table and event.type() in (QEvent.Type.FontChange,QEvent.Type.StyleChange,QEvent.Type.DevicePixelRatioChange):
+            self.schedule_fit()
         return super().eventFilter(watched,event)
 
     def schedule_fit(self):
@@ -100,11 +127,12 @@ class TaskDialog(QDialog):
         width=self.table.viewport().width()
         title=max(380,int(width*.34))
         metrics=QFontMetrics(self.table.font())
+        status=max(metrics.horizontalAdvance(text) for text in STATUS_TEXTS)+metrics.horizontalAdvance('  ')+12
+        if status!=self.status_default_width:
+            self.table.setColumnWidth(3,status);self.status_default_width=status
         paths={row['output'] for row in self.visible.values()}
-        for path in paths:
-            if path not in self.path_widths:self.path_widths[path]=metrics.horizontalAdvance(path)+30
-        natural=max([240]+[self.path_widths[path] for path in paths])
-        for column,size in enumerate((title,160,100,140,max(natural,width-title-400))):
+        natural=max([240]+[metrics.horizontalAdvance(path)+30 for path in paths])
+        for column,size in ((0,title),(1,160),(2,100),(4,max(natural,width-title-260-self.table.columnWidth(3)))):
             self.table.setColumnWidth(column,size)
 
     def selected(self):
@@ -131,12 +159,13 @@ class TaskDialog(QDialog):
                 self.table.setRowCount(0);self.table.setRowCount(len(rows))
             self.visible={row['id']:row for row in rows}
             for i,task in enumerate(rows):
-                state={'queued':'排队中','paused':'已暂停','failed':'失败，待处理','completed':'已完成','cancelled':'已取消'}.get(task['state'],task.get('stage') or '准备中')
+                state=TASK_STATES.get(task['state'],task.get('stage') or '准备中')
                 if task['state']=='running' and task['id'] not in self.queue.active:state='其他窗口运行或上次中断'
                 for j,value in ((0,task['title']),(2,task['site']),(3,state),(4,task['output'])):
                     item=self.table.item(i,j)
                     if item is None:item=QTableWidgetItem();self.table.setItem(i,j,item)
-                    item.setText(value.replace('\r',' ').replace('\n',' ') if j==0 else value)
+                    display=STATUS_SHORTCUTS.get(value,value) if j==3 else value
+                    item.setText(display.replace('\r',' ').replace('\n',' ') if j in (0,3) else display)
                     item.setToolTip(value)
                     if j==0:
                         item.setData(Qt.ItemDataRole.UserRole,task['id'])

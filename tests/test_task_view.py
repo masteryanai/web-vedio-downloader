@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 class TaskViewTest(unittest.TestCase):
     def test_task_window_filters_layout_and_id_actions(self):
-        env=dict(os.environ,QT_QPA_PLATFORM='offscreen')
+        env=dict(os.environ,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1')
         result=subprocess.run([sys.executable,'-c',
             "import runpy;runpy.run_path('tests/test_task_view.py',run_name='__main__')",'--gui-check'],
             capture_output=True,text=True,encoding='utf-8',env=env,timeout=30)
@@ -20,11 +20,11 @@ class TaskViewTest(unittest.TestCase):
 def gui_check():
     import json,time
     from PySide6.QtWidgets import QApplication,QMessageBox,QStyleOptionViewItem,QProgressBar,QDialog
-    from PySide6.QtCore import Qt,QTimer
+    from PySide6.QtCore import Qt,QTimer,QRect
     import download_tasks as tasks
     from download_queue import DownloadQueue
-    from task_view import TaskDialog,DeleteDialog
-    from PySide6.QtGui import QFont
+    from task_view import TaskDialog,DeleteDialog,STATUS_TEXTS
+    from PySide6.QtGui import QFont,QFontMetrics,QImage,QPainter,QColor
     from main import STYLE
     app=QApplication([]);app.setFont(QFont('Microsoft YaHei UI',10));app.setStyleSheet(STYLE)
     def settle():
@@ -47,6 +47,7 @@ def gui_check():
             tasks.history_file('d'*32).write_text('{broken')
             queue=DownloadQueue();dialog=TaskDialog(queue,lambda _:None);dialog.show();settle()
             assert dialog.table.rowCount()==7
+            assert dialog.table.itemDelegateForColumn(3) is not None, '状态列缺少防溢出绘制'
             cell=dialog.table.cellWidget(0,1);bar=cell.findChild(QProgressBar)
             assert abs(bar.y()-(cell.height()-bar.y()-bar.height()))<=1
             assert bar.alignment()==Qt.AlignmentFlag.AlignCenter
@@ -57,8 +58,38 @@ def gui_check():
             assert '\n' not in dialog.table.item(0,0).text()
             assert dialog.table.item(0,0).toolTip()==created[0]['title']
             assert dialog.table.horizontalScrollBar().maximum()>0
+            # Real running status uses a short label but retains its full source message.
+            running_id=created[3]['id'];raw='AGE：连接视频源，确认已下载进度。'
+            queue.active[running_id]=None;queue.snapshots[running_id]={'stage':raw}
+            dialog.refresh();settle()
+            status=dialog.table.item(3,3)
+            assert status.text()=='确认已下载进度' and status.toolTip()==raw
+            delegate=dialog.table.itemDelegateForColumn(3)
+            default_font=QFont(dialog.table.font())
+            for points in (9,14):
+                font=QFont(default_font);font.setPointSize(points);dialog.table.setFont(font);settle()
+                metrics=QFontMetrics(dialog.table.font())
+                assert all(metrics.horizontalAdvance(text)+12<=dialog.table.columnWidth(3) for text in STATUS_TEXTS)
+            dialog.table.setFont(default_font);settle()
+            baseline=dialog.table.columnWidth(3)
+            unknown='未知超长状态'*80;queue.snapshots[running_id]={'stage':unknown};dialog.refresh();settle()
+            assert dialog.table.columnWidth(3)==baseline # runtime messages do not resize the column.
+            assert dialog.table.item(3,3).toolTip()==unknown
+            option=QStyleOptionViewItem();option.initFrom(dialog.table)
+            delegate.initStyleOption(option,dialog.table.model().index(3,3))
+            assert option.textElideMode==Qt.TextElideMode.ElideRight
+            option.rect=QRect(0,0,90,32);option.widget=dialog.table
+            canvas=QImage(240,32,QImage.Format.Format_ARGB32);sentinel=QColor('magenta');canvas.fill(sentinel)
+            painter=QPainter(canvas);delegate.paint(painter,option,dialog.table.model().index(3,3));painter.end()
+            assert all(canvas.pixelColor(x,y)==sentinel for x in range(90,240) for y in range(32)), 'status paint escaped into the path cell'
+            dialog.table.setColumnWidth(3,90);dialog.refresh();settle()
+            assert dialog.table.columnWidth(3)==90
+            dialog.resize(1200,520);settle();assert dialog.table.columnWidth(3)==90
+            dialog.status_default_width=None;dialog.fit_columns();dialog.resize(1100,520);settle()
+            queue.snapshots[running_id]={'stage':raw};dialog.refresh();settle()
             screenshot=os.environ.get('TASK_VIEW_SCREENSHOT')
             if screenshot:dialog.grab().save(screenshot)
+            queue.active.pop(running_id);queue.snapshots.pop(running_id);dialog.refresh()
             dialog.tabs.setCurrentIndex(1);assert dialog.table.rowCount()==4
             assert dialog.buttons['delete'].isHidden()
             assert all(not dialog.buttons[key].isHidden() for key in ('pause','resume','cancel'))
@@ -104,6 +135,8 @@ def gui_check():
             assert dialog.selected()['id']==selected and dialog.search.text()=='completed-one'
             before=dialog.table.columnWidth(0);dialog.resize(1800,600);settle()
             assert dialog.table.columnWidth(0)>before
+            assert dialog.table.horizontalHeader().length()>=dialog.table.viewport().width()-1
+            dialog.resize(2200,600);settle()
             assert abs(dialog.table.horizontalHeader().length()-dialog.table.viewport().width())<=1
             if screenshot:dialog.grab().save(str(Path(screenshot).with_stem(Path(screenshot).stem+'-wide')))
             def select_other(choice):
