@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 
 
-def download(url, path, *, opener, headers, check, report, bytes_report=None):
+def download(url, path, *, opener, headers, check, report, bytes_report=None, read=None):
     path = Path(path)
     sidecar = path.with_name(path.name + '.resume.json')
     for attempt in range(3):
@@ -61,7 +61,7 @@ def download(url, path, *, opener, headers, check, report, bytes_report=None):
                     temporary.write_text(json.dumps(meta)); temporary.replace(sidecar)
                     while True:
                         check()
-                        chunk = response.read(256*1024)
+                        chunk = read(response,256*1024) if read else response.read(256*1024)
                         if not chunk:
                             break
                         output.write(chunk); count += len(chunk)

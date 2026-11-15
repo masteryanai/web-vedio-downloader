@@ -1,13 +1,17 @@
 """Validated, merged preferences; writes never discard unrelated settings."""
 import json
+import math
 from pathlib import Path
 import uuid
 from runtime import app_data_dir
 
 DEFAULTS={'parallel_downloads':5,'close_action':'ask','float_enabled':False,
-          'float_opacity':85,'float_auto_hide':True,'float_position':None,'float_edge':'','auto_check_updates':True,'update_interval_hours':4}
+          'float_opacity':85,'float_auto_hide':True,'float_position':None,'float_edge':'','auto_check_updates':True,'update_interval_hours':4,'download_limit_mib':0}
 
 def valid(key,value):
+    if key=='download_limit_mib':
+        try:return type(value) in (int,float) and math.isfinite(value) and (value==0 or .01<=value<=102400)
+        except OverflowError:return False
     if key=='parallel_downloads':return type(value) is int and 1<=value<=10
     if key=='close_action':return value in ('ask','hide','exit')
     if key in ('float_enabled','float_auto_hide','auto_check_updates'):return type(value) is bool
@@ -37,6 +41,9 @@ def update(**changes):
         try:
             temporary.write_text(json.dumps(data,ensure_ascii=False),encoding='utf-8');temporary.replace(folder/'settings.json')
         finally:temporary.unlink(missing_ok=True)
+    if 'download_limit_mib' in changes:
+        from media_bandwidth import configure_mib
+        configure_mib(changes['download_limit_mib'])
     return load()
 
 def parallel_limit():return load()['parallel_downloads']

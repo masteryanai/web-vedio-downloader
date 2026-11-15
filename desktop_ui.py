@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt,QObject,QTimer,QPoint,QRect,Signal
 from PySide6.QtGui import QGuiApplication,QIcon,QPixmap,QPainter,QColor,QPen
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
-    QCheckBox,QSpinBox,QComboBox,QFrame,QProgressBar,QMenu,QSystemTrayIcon,QMessageBox,QSizePolicy)
+    QCheckBox,QSpinBox,QDoubleSpinBox,QComboBox,QFrame,QProgressBar,QMenu,QSystemTrayIcon,QMessageBox,QSizePolicy)
 import preferences
 import diagnostics
 from transfer_stats import speed_text,overview
@@ -41,6 +41,9 @@ class SettingsDialog(QDialog):
         cfg=preferences.load();layout=QVBoxLayout(self)
         layout.addWidget(QLabel('同时运行的下载任务数（1～10）'))
         self.count=QSpinBox();self.count.setRange(1,10);self.count.setValue(desktop.queue.limit);layout.addWidget(self.count)
+        self.limit_enabled=QCheckBox('限制媒体下载总速度（所有任务共享）');self.limit_enabled.setChecked(cfg['download_limit_mib']>0);layout.addWidget(self.limit_enabled)
+        self.speed_limit=QDoubleSpinBox();self.speed_limit.setDecimals(2);self.speed_limit.setRange(.01,102400);self.speed_limit.setSingleStep(.5);self.speed_limit.setSuffix(' MiB/s');self.speed_limit.setValue(cfg['download_limit_mib'] or 5);self.speed_limit.setEnabled(self.limit_enabled.isChecked());self.limit_enabled.toggled.connect(self.speed_limit.setEnabled);layout.addWidget(self.speed_limit)
+        rate_note=QLabel('默认不限速。仅限制视频、图片和配乐；保存后立即生效，软件更新不受限。');rate_note.setWordWrap(True);layout.addWidget(rate_note)
         layout.addWidget(QLabel('点击主窗口关闭按钮时'))
         self.close_action=QComboBox()
         for text,key in (('每次询问','ask'),('隐藏到托盘','hide'),('退出程序','exit')):self.close_action.addItem(text,key)
@@ -62,7 +65,7 @@ class SettingsDialog(QDialog):
     def apply(self):
         try:
             self.desktop.save(parallel_downloads=self.count.value(),close_action=self.close_action.currentData(),
-                float_enabled=self.enabled.isChecked(),float_auto_hide=self.auto_hide.isChecked(),float_opacity=self.opacity.value(),auto_check_updates=self.auto_check.isChecked(),update_interval_hours=self.check_interval.value())
+                float_enabled=self.enabled.isChecked(),float_auto_hide=self.auto_hide.isChecked(),float_opacity=self.opacity.value(),auto_check_updates=self.auto_check.isChecked(),update_interval_hours=self.check_interval.value(),download_limit_mib=self.speed_limit.value() if self.limit_enabled.isChecked() else 0)
             self.accept()
         except Exception as error:self.error.setText('设置未保存：'+diagnostics.redact(str(error)))
 

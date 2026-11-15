@@ -39,10 +39,16 @@ def check():
         assert preferences.load()['close_action']=='ask'
         def settings():
             dialog=app.activeModalWidget();assert isinstance(dialog,SettingsDialog)
+            assert not dialog.limit_enabled.isChecked() and not dialog.speed_limit.isEnabled()
+            dialog.limit_enabled.setChecked(True);dialog.speed_limit.setValue(1.25)
             dialog.count.setValue(3);dialog.enabled.setChecked(True);dialog.opacity.setValue(70)
             if os.environ.get('DESKTOP_SCREENSHOT'):dialog.grab().save(str(Path(os.environ['DESKTOP_SCREENSHOT']).with_stem('settings-080-native')))
             dialog.apply()
         QTimer.singleShot(30,settings);window.show_settings();settle()
+        from media_bandwidth import shared
+        assert preferences.load()['download_limit_mib']==1.25 and shared().rate==1.25*1024**2
+        reopened=SettingsDialog(desktop);assert reopened.limit_enabled.isChecked() and reopened.speed_limit.value()==1.25
+        reopened.limit_enabled.setChecked(False);reopened.apply();assert shared().rate==0
         panel=desktop.panel;assert panel and panel.isVisible() and panel.windowOpacity()>.65
         assert preferences.parallel_limit()==3 and panel.hide_timer.interval()==1000 and panel.rotate_timer.interval()==3000
         dialog=SettingsDialog(desktop);dialog.show();desktop.set_float_enabled(False);settle()

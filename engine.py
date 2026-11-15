@@ -370,6 +370,8 @@ class _YtdlpLogger:
 
 
 def _ytdlp_error(error, site):
+    from media_bandwidth import UnsupportedMediaTransport
+    if isinstance(error,UnsupportedMediaTransport):return VideoError(str(error))
     message = str(error).lower()
     if site == "优酷" and any(x in message for x in ("-6004", "限制播放", "播放受限")):
         return VideoError("优酷当前限制了播放请求，请在官方页面确认该内容可播放并完成验证后重试。")
@@ -632,11 +634,13 @@ def _remux(source, target, progress, cancel):
 
 def _download_http(url, path, *, cookies, referer, progress, cancel):
     from http_resume import download
+    from media_bandwidth import read_media
     byte_state={}
     try:
         download(url, path, opener=_opener(cookies, urllib.parse.urlsplit(url).hostname or ""),
                  headers={"User-Agent": IPHONE_UA, "Referer": referer, "Accept": "*/*"},
                  check=lambda: _check_cancel(cancel),
+                 read=lambda response,count:read_media(response,count,lambda:_check_cancel(cancel)),
                  bytes_report=lambda count,total:byte_state.update(downloaded_bytes=count,total_bytes=total),
                  report=lambda percent, stage, speed, eta: _progress(progress, percent, stage, speed, eta, percent*1.25 if speed is not None and percent is not None else None, phase=None if stage=="下载文件已就绪" else "download",**byte_state))
     except ValueError as error:
@@ -708,7 +712,8 @@ def _download_cctv(info, selected, work, cookies, progress, log, cancel):
         options.update({'outtmpl':str(work/'cctv.%(ext)s'), 'hls_prefer_native':True,
                         'progress_hooks':[native_progress],
                         'ffmpeg_location':str(Path(_tool('ffmpeg')).parent)})
-        with yt_dlp.YoutubeDL(options) as ydl:
+        from media_ytdlp import MediaYoutubeDL
+        with MediaYoutubeDL(options,lambda:_check_cancel(cancel)) as ydl:
             raw = ydl.extract_info(current['_media_url'], download=True)
             source = Path(ydl.prepare_filename(raw))
     _remux(source, target, progress, cancel)
@@ -766,7 +771,8 @@ def _download_ytdlp(info, selected, work, cookies, progress, log, cancel):
         "fixup": "detect_or_warn", "windowsfilenames": True,
     })
     try:
-        with yt_dlp.YoutubeDL(options) as ydl:
+        from media_ytdlp import MediaYoutubeDL
+        with MediaYoutubeDL(options,lambda:_check_cancel(cancel)) as ydl:
             for cookie in _cookie_jar(cookies, urllib.parse.urlsplit(info["url"]).hostname or ""):
                 ydl.cookiejar.set_cookie(cookie)
             raw = ydl.extract_info(info.get("_source_url") or info["url"], download=True)
