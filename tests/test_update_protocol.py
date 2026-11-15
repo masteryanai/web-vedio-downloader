@@ -29,9 +29,9 @@ class UpdateProtocol(unittest.TestCase):
         write(self.new,'WebVideoDownloader.exe',b'new');write(self.new,'_internal/runtime.dll',b'fixed');write(self.new,'_internal/added.dat',b'added')
         self.base=protocol.tree_inventory(self.install,'0.8.0');self.target=protocol.tree_inventory(self.new,'0.9.0')
         write(self.install,protocol.INSTALLATION,protocol.canonical(self.base));self.cancel=threading.Event()
-        self.env=patch.dict(os.environ,LOCALAPPDATA=str(self.root/'data'));self.env.start();self.current=patch('update_package.APP_VERSION','0.8.0');self.current.start()
+        self.env=patch.dict(os.environ,LOCALAPPDATA=str(self.root/'data'));self.env.start();self.current=patch('update_package.APP_VERSION','0.8.0');self.current.start();self.pending_version=patch('update_pending.APP_VERSION','0.8.0');self.pending_version.start()
     def tearDown(self):
-        self.current.stop();self.env.stop()
+        self.pending_version.stop();self.current.stop();self.env.stop()
         for attempt in range(30):
             try:self.temp.cleanup();break
             except PermissionError:
@@ -103,9 +103,23 @@ class UpdateProtocol(unittest.TestCase):
         unknown=write(Path(index['folder']),'user-keep.txt',b'user backup note')
         result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'recovery.ps1'),'-InstallDir',str(self.install),'-Action','restore','-NoLaunch'],capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr);self.assertTrue(protocol.verify_tree(self.install,self.base)[0])
+        state=self.root/'data'/'WebVideoDownloaderPrototype'/'updates'
+        self.assertEqual(Path(json.loads((state/'last-install.json').read_text(encoding='utf-8-sig'))['stage']).parent,self.install/'update')
         self.assertEqual(unknown.read_bytes(),b'user backup note');self.assertFalse((unknown.parent/'backup-info.json').exists())
         self.assertEqual((self.install/'_internal/custom.txt').read_bytes(),b'private')
         self.assertTrue((self.root/'data'/'WebVideoDownloaderPrototype'/'updates'/'state.json').exists())
+    @unittest.skipUnless(os.name=='nt','Windows recovery')
+    def test_independent_recovery_uses_configured_cache_directory(self):
+        result,report=self.run_install();self.assertEqual(result.returncode,0,report)
+        custom=self.root/'custom-update';data=self.root/'data'/'WebVideoDownloaderPrototype'
+        write(data,'settings.json',json.dumps({'update_cache_dir':str(custom)}).encode())
+        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'recovery.ps1'),'-InstallDir',str(self.install),'-Action','restore','-NoLaunch'],capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertTrue(protocol.verify_tree(self.install,self.base)[0])
+        last=json.loads((data/'updates'/'last-install.json').read_text(encoding='utf-8-sig'))
+        self.assertEqual(Path(last['stage']).parent,custom)
+        self.assertTrue((custom/'.update-cache.json').exists())
+
     @unittest.skipUnless(os.name=='nt','Windows installer')
     def test_transaction_failure_restores_every_touched_file(self):
         result,report=self.run_install(fail=2);self.assertEqual(result.returncode,1);self.assertFalse(report['ok']);self.assertFalse(report['restore_error']);self.assertIn('Injected',report['error'])
@@ -142,6 +156,9 @@ class UpdateProtocol(unittest.TestCase):
         plan=json.loads(Path(prepared['plan']).read_text(encoding='utf-8'))
         self.assertTrue(protocol.verify_tree(plan['payload_dir'],self.target)[0]);self.assertTrue(protocol.verify_tree(self.install,self.base)[0])
         self.assertTrue(Path(prepared['helper']).is_file())
+        import update_pending
+        with patch('sys.frozen',True,create=True),patch('sys.executable',str(self.install/'WebVideoDownloader.exe')):
+            self.assertEqual(update_pending.restore()['prepared']['plan'],prepared['plan'])
 
     def test_preview_reads_no_program_bytes_or_remote_inventories(self):
         with patch('update_package.verify_tree',side_effect=AssertionError('preview hashed files')),patch('update_package.fetch_json',side_effect=AssertionError('preview fetched inventory')):

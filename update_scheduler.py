@@ -29,8 +29,20 @@ class UpdateScheduler(QObject):
         if pending:
             from update_center import UpdateCenter
             self.window.update_dialog=UpdateCenter(window,self);self.window.update_dialog.restore_prepared(pending)
+        self.cache_thread=None;self.cache_job=None
+        import sys
+        self.cache_timer=QTimer(self);self.cache_timer.setInterval(3600000);self.cache_timer.timeout.connect(self.maintain_cache)
+        if getattr(sys,'frozen',False):
+            QTimer.singleShot(5000,self.maintain_cache);self.cache_timer.start()
         self.result_attempts=0;self.result_timer=QTimer(self);self.result_timer.setInterval(1000);self.result_timer.timeout.connect(self.poll_result);self.result_timer.start()
         QTimer.singleShot(15000,self.tick)
+    def maintain_cache(self):
+        if self.stopping or self.cache_thread is not None:return
+        from update_cache_ui import Work
+        import update_cache
+        self.cache_thread=QThread(self);self.cache_job=Work(update_cache.maintain);self.cache_job.moveToThread(self.cache_thread)
+        self.cache_thread.started.connect(self.cache_job.run);self.cache_job.error.connect(lambda error:diagnostics.event('update.cache.maintenance',error));self.cache_job.finished.connect(self.cache_thread.quit);self.cache_job.finished.connect(self.cache_job.deleteLater);self.cache_thread.finished.connect(self.cache_done);self.cache_thread.finished.connect(self.cache_thread.deleteLater);self.cache_thread.start()
+    def cache_done(self):self.cache_thread=None;self.cache_job=None
     def poll_result(self):
         from update_bootstrap import result_notice
         self.result_attempts+=1;notice=result_notice()
@@ -93,7 +105,7 @@ class UpdateScheduler(QObject):
     def ignore(self,ver):self.state['ignored_version']=ver;self.refresh()
     def snooze(self):self.state.update(snooze_until=time.time()+4*3600,notified_version='');self.refresh()
     def shutdown(self):
-        self.stopping=True;self.timer.stop();self.result_timer.stop()
+        self.stopping=True;self.timer.stop();self.result_timer.stop();self.cache_timer.stop()
         dialog=getattr(self.window,'update_dialog',None)
         if dialog:dialog.close()
-        return self.thread is None and (not dialog or not dialog.busy())
+        return self.thread is None and self.cache_thread is None and (not dialog or not dialog.busy())

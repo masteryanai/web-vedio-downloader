@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 import tempfile
+import update_cache
 from runtime import APP_VERSION,app_data_dir,resource_path
 from update_protocol import (APPLICATION,INSTALLATION,canonical,digest,validate_inventory,verify_tree,
     differences,assemble_delta,extract_verified,owned_path,version)
@@ -117,19 +118,25 @@ def select(info,install=None,cancel=None,progress=None,allow_full=False):
 
 
 def prepare(info,cancel,progress):
+    with update_cache.preparing():return _prepare(info,cancel,progress)
+
+
+def _prepare(info,cancel,progress):
     if not getattr(sys,'frozen',False):raise RuntimeError('源码模式不能覆盖安装，请使用发布的 EXE 版本。')
     import updater
     install=Path(sys.executable).resolve().parent
     if not (install/'WebVideoDownloader.exe').is_file():raise ValueError('安装目录无效。')
-    plan=select(info,install,cancel,progress,info.get('allow_full',False));folder=app_data_dir()/'updates';folder.mkdir(parents=True,exist_ok=True)
-    stage=Path(tempfile.mkdtemp(prefix='install-',dir=folder));payload=stage/'payload';payload.mkdir()
+    plan=select(info,install,cancel,progress,info.get('allow_full',False));folder=update_cache.register(update_cache.location())
+    stage=update_cache.new_stage(folder);payload=stage/'payload';payload.mkdir()
+    (stage/'target.json').write_bytes(canonical(plan['target']))
     if plan['mode']=='local':
         for i,row in enumerate(plan['target']['files']):
             if cancel.is_set():raise RuntimeError('已取消更新。')
             source=owned_path(plan['backup']['folder'],row['path']);dest=owned_path(payload,row['path']);dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest)
             if i%25==0 or i+1==len(plan['target']['files']):progress({'phase':'copy','percent':int((i+1)*100/len(plan['target']['files'])),'stage':'准备本地备份恢复','files_done':i+1,'files_total':len(plan['target']['files'])})
     else:
-        desc=plan['package'];cache=folder/('package-'+desc['sha256']);cache.mkdir(exist_ok=True);archive=cache/'package.zip'
+        desc=plan['package'];cache=update_cache.package_dir(folder,desc['sha256']);archive=cache/'package.zip'
+        update_cache.mark(cache,'package');update_cache.mark(stage,'stage',archive=str(archive));update_cache.reuse_package(cache,desc)
         from update_transfer import download
         from diagnostics import file_lock
         with file_lock(cache):download(archive,desc,lambda headers,timeout:updater.request(asset_url(desc),asset=True,headers=headers,timeout=timeout),cancel,progress)
@@ -149,4 +156,8 @@ def prepare(info,cancel,progress):
         file=stage/(name+'.json');file.write_bytes(canonical(plan[name]));config[name+'_inventory']=str(file);config[name+'_sha256']=digest(file)
     (stage/'plan.json').write_bytes(canonical(config))
     shutil.copy2(resource_path('update_install.ps1'),stage/'update_install.ps1')
-    return {'plan':str(stage/'plan.json'),'helper':str(stage/'update_install.ps1')}
+    prepared={'plan':str(stage/'plan.json'),'helper':str(stage/'update_install.ps1')}
+    # Persist protection before releasing the cache operation lock or notifying Qt.
+    from update_pending import remember
+    remember(prepared,info)
+    return prepared

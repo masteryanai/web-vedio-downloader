@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 $config=Get-Content -LiteralPath $Plan -Raw -Encoding UTF8 | ConvertFrom-Json
 $stage=[IO.Path]::GetFullPath((Split-Path -Parent $Plan))
 $root=[IO.Path]::GetFullPath($config.install_dir).TrimEnd('\')
-$backup=$null;$touched=@();$original=@{};$committed=$false;$indexWritten=$false;$oldIndexText=$null;$oldStateText=$null;$installLock=$null;$blockedByInstaller=$false
+$backup=$null;$touched=@();$original=@{};$committed=$false;$indexWritten=$false;$oldIndexText=$null;$oldStateText=$null;$installLock=$null;$cacheLock=$null;$blockedByInstaller=$false
 function Sha([string]$File) { $stream=[IO.File]::OpenRead($File);$algorithm=[Security.Cryptography.SHA256]::Create();try{return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}finally{$stream.Dispose();$algorithm.Dispose()} }
 function Safe([string]$Folder,[string]$Name) {
     if ($Name -match '\\|:|\x00' -or $Name -notmatch '^(WebVideoDownloader\.exe|README\.md|LICENSES\.md|_internal/.+)$') {throw 'Non-program path.'}
@@ -38,6 +38,7 @@ function Result($Value){$Value | ConvertTo-Json -Depth 10 | Set-Content -Literal
 try {
     if($config.schema -ne 2 -or $root -eq [IO.Path]::GetPathRoot($root).TrimEnd('\') -or $root -eq $env:USERPROFILE -or $root -eq $env:WINDIR -or -not (Test-Path -LiteralPath (Join-Path $root 'WebVideoDownloader.exe') -PathType Leaf)){throw 'Unsafe installation folder.'}
     $data=[IO.Path]::GetFullPath($config.data_dir);$updates=Join-Path $data 'updates';$null=New-Item -ItemType Directory -Force -Path $updates
+    if(-not $cacheLock){$cacheLock=[IO.File]::Open((Join-Path $updates 'writer.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}
     $payload=[IO.Path]::GetFullPath($config.payload_dir)
     if(-not $payload.StartsWith($stage+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Payload is outside staging folder.'}
     $target=Inventory $config.target_inventory $config.target_sha256;$base=Inventory $config.base_inventory $config.base_sha256
@@ -140,4 +141,4 @@ try {
     Result @{ok=$false;error=$failure;restore_error=$restoreError;backup=$backup}
     if(-not $NoLaunch -and -not $blockedByInstaller -and -not $restoreError -and (Test-Path -LiteralPath (Join-Path $root 'WebVideoDownloader.exe'))){try{Start-Process -FilePath (Join-Path $root 'WebVideoDownloader.exe') -WorkingDirectory $root -WindowStyle Normal}catch{}}
     exit 1
-}finally{if($installLock){$installLock.Dispose()}}
+}finally{if($installLock){$installLock.Dispose()};if($cacheLock){$cacheLock.Dispose()}}

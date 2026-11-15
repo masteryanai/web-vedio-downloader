@@ -13,8 +13,9 @@ def pointer():return app_data_dir()/'updates'/'prepared.json'
 
 def validate(prepared,info):
     if not isinstance(prepared,dict) or not isinstance(info,dict):raise ValueError('待安装记录无效。')
-    root=(app_data_dir()/'updates').resolve();plan=Path(prepared['plan']).resolve();helper=Path(prepared['helper']).resolve()
-    if plan.parent.parent!=root or not plan.parent.name.startswith('install-') or helper.parent!=plan.parent or helper.name!='update_install.ps1':raise ValueError('待安装计划路径不安全。')
+    from update_cache import roots
+    allowed=roots();plan=Path(prepared['plan']).resolve();helper=Path(prepared['helper']).resolve()
+    if plan.parent.parent not in allowed or not plan.parent.name.startswith('install-') or helper.parent!=plan.parent or helper.name!='update_install.ps1':raise ValueError('待安装计划路径不安全。')
     config=json.loads(plan.read_text(encoding='utf-8-sig'))
     if not isinstance(config,dict):raise ValueError('待安装计划无效。')
     if config.get('schema')!=2 or Path(config['install_dir']).resolve()!=Path(sys.executable).resolve().parent:raise ValueError('待安装计划与当前安装目录不一致。')

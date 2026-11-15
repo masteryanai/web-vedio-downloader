@@ -74,12 +74,13 @@ def validate_inventory(data):
 
 def tree_inventory(folder,ver):
     root=Path(folder);files=[]
-    for path in sorted(root.rglob('*')):
+    # Traverse managed program roots only. update/ may contain a complete prepared app.
+    paths=[root/name for name in ROOT_FILES if (root/name).is_file()]
+    if (root/'_internal').is_dir():paths.extend((root/'_internal').rglob('*'))
+    for path in sorted(paths):
         if not path.is_file():continue
         name=path.relative_to(root).as_posix()
         if name==INSTALLATION:continue
-        # A convenience root launcher is deliberately outside managed program data.
-        if name.split('/')[0] not in ROOT_FILES and not name.startswith('_internal/'):continue
         owned_path(root,name);files.append({'path':name,'size':path.stat().st_size,'sha256':digest(path)})
     return inventory(ver,files)
 

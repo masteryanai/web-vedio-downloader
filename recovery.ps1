@@ -3,6 +3,22 @@ $ErrorActionPreference='Stop'
 [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
 $root=[IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
 $data=Join-Path $env:LOCALAPPDATA 'WebVideoDownloaderPrototype';$updates=Join-Path $data 'updates'
+$cache=Join-Path $root 'update';$settingsFile=Join-Path $data 'settings.json'
+if(Test-Path -LiteralPath $settingsFile){$prefs=Get-Content -LiteralPath $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json;if($prefs.update_cache_dir){$cache=[string]$prefs.update_cache_dir}}
+$cache=[IO.Path]::GetFullPath($cache).TrimEnd('\')
+$recoveryActive=Join-Path $updates 'recovery-active.json';$cacheGuard=$null
+function CacheMarker($Folder,$Kind){@{application='WebVideoDownloader';install_dir=$root;kind=$Kind;used_at=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Folder '.cache-entry.json') -Encoding UTF8}
+function CacheFolder {
+    if($cache -eq $root -or $cache -eq [IO.Path]::GetPathRoot($cache).TrimEnd('\') -or $cache -eq $updates -or $cache -eq $data){throw 'Unsafe update cache directory.'}
+    $cursor=$cache;while($cursor){if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Linked cache path rejected.'};$cursor=[IO.Path]::GetDirectoryName($cursor)}
+    $marker=Join-Path $cache '.update-cache.json'
+    if((Test-Path -LiteralPath $cache) -and @(Get-ChildItem -LiteralPath $cache -Force).Count -gt 0){$owner=Get-Content -LiteralPath $marker -Raw -Encoding UTF8 | ConvertFrom-Json;if($owner.application -ne 'WebVideoDownloader' -or $owner.install_dir -ne $root){throw 'Cache directory is not owned by this installation.'}}
+    $null=New-Item -ItemType Directory -Force -Path $cache
+    @{application='WebVideoDownloader';install_dir=$root} | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
+    $registry=Join-Path $updates 'cache-locations.json';$roots=@($cache)
+    if(Test-Path -LiteralPath $registry){$old=Get-Content -LiteralPath $registry -Raw -Encoding UTF8 | ConvertFrom-Json;$roots+=@($old.roots)}
+    @{roots=@($roots | Select-Object -Unique)} | ConvertTo-Json | Set-Content -LiteralPath $registry -Encoding UTF8
+}
 $prefix='https://github.com/masteryanai/web-vedio-downloader/releases/download/'
 function Sha($File){$stream=[IO.File]::OpenRead($File);$algorithm=[Security.Cryptography.SHA256]::Create();try{return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}finally{$stream.Dispose();$algorithm.Dispose()}}
 function Fetch($Descriptor,$Destination){
@@ -46,7 +62,11 @@ try{
     Write-Host 'Close the downloader first. Tasks, accounts and downloaded media are preserved.'
     if(-not (Test-Path -LiteralPath (Join-Path $root 'WebVideoDownloader.exe'))){throw 'Invalid application directory.'}
     $null=New-Item -ItemType Directory -Force -Path $updates
-    $stage=Join-Path $updates ('recovery-'+[Guid]::NewGuid().ToString('N'));$null=New-Item -ItemType Directory -Path $stage
+    $cacheGuard=[IO.File]::Open((Join-Path $updates 'writer.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    CacheFolder
+    $stage=Join-Path $cache ('recovery-'+[Guid]::NewGuid().ToString('N'));$null=New-Item -ItemType Directory -Path $stage
+    CacheMarker $stage 'stage'
+    @{stage=$stage} | ConvertTo-Json | Set-Content -LiteralPath $recoveryActive -Encoding UTF8
     $payload=Join-Path $stage 'payload';$null=New-Item -ItemType Directory -Path $payload
     $baseFile=Join-Path $root '_internal\installation.json'
     if(-not (Test-Path -LiteralPath $baseFile)){throw 'Missing installed inventory. Extract a complete portable release to a new folder.'}
@@ -78,7 +98,11 @@ try{
         $index=[int](Read-Host 'Select version index');if($index -lt 0 -or $index -ge $entries.Count){throw 'Invalid selection.'};$entry=$entries[$index]
         $target=Metadata $entry.inventory 'target-download.json';$targetFile=Join-Path $stage 'target-download.json'
         if($target.version -ne $entry.version){throw 'Target version mismatch.'}
-        $archive=Join-Path $updates ('recovery-'+$entry.package.sha256+'.zip');Fetch $entry.package $archive
+        $package=Join-Path $cache ('package-'+$entry.package.sha256);$null=New-Item -ItemType Directory -Force -Path $package
+        if(@(Get-ChildItem -LiteralPath $package -Force | Where-Object {$_.Name -notin @('package.zip','.cache-entry.json','writer.lock','transfer.lock')}).Count -gt 0){throw 'Unknown files in package cache.'};CacheMarker $package 'package'
+        $archive=Join-Path $package 'package.zip'
+        @{application='WebVideoDownloader';install_dir=$root;kind='stage';used_at=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();archive=$archive} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage '.cache-entry.json') -Encoding UTF8
+        Fetch $entry.package $archive
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zip=[IO.Compression.ZipFile]::OpenRead($archive)
         try{
@@ -103,7 +127,9 @@ try{
     $helper=Join-Path $PSScriptRoot 'update_install.ps1'
     $arguments=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$helper,'-Plan',$planFile)
     if($NoLaunch){$arguments+='-NoLaunch'}
+    $cacheGuard.Dispose();$cacheGuard=$null
     & powershell.exe @arguments
     if($LASTEXITCODE -ne 0){throw ('Installation failed. See '+(Join-Path $stage 'result.json'))}
     Write-Host 'Completed. Previous managed program files retained as the local backup.'
 }catch{Write-Host ('Recovery failed: '+$_.Exception.Message) -ForegroundColor Red;exit 1}
+finally{if($cacheGuard){$cacheGuard.Dispose()};if(Test-Path -LiteralPath $recoveryActive){Remove-Item -LiteralPath $recoveryActive -Force}}

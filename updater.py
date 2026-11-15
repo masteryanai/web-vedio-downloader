@@ -118,6 +118,11 @@ def check_api_update():
 
 
 def prepare_update(info, cancel, progress):
+    import update_cache
+    with update_cache.preparing():return _prepare_update(info,cancel,progress)
+
+
+def _prepare_update(info, cancel, progress):
     if info.get('manifest',{}).get('schema')==2:
         from update_package import prepare
         return prepare(info,cancel,progress)
@@ -130,13 +135,14 @@ def prepare_update(info, cancel, progress):
         raise RuntimeError('安装目录验证失败。')
     with tempfile.TemporaryFile(dir=install.parent):
         pass
-    folder = app_data_dir()/'updates'
-    folder.mkdir(parents=True,exist_ok=True)
+    import update_cache
+    folder = update_cache.register(update_cache.location())
     expected = info['manifest']
     if not re.fullmatch('[0-9a-f]{64}',expected.get('sha256','')) or type(expected.get('size')) is not int or expected['size']<=0:
         raise RuntimeError('更新校验信息无效。')
-    stage=folder/('package-'+expected['sha256']);stage.mkdir(exist_ok=True)
+    stage=update_cache.package_dir(folder,expected['sha256'])
     archive=stage/'package.zip'
+    update_cache.mark(stage,'package');update_cache.reuse_package(stage,expected)
     from update_transfer import download
     # OS lock prevents two application instances from appending to the same partial ZIP.
     lock=stage/'transfer.lock'
@@ -165,7 +171,8 @@ def prepare_update(info, cancel, progress):
             if parts[0]!='WebVideoDownloader' or '..' in parts or ':' in name:
                 raise RuntimeError('更新包包含不安全路径。')
     if cancel.is_set():raise RuntimeError('已取消更新，已保留下载包。')
-    plan_stage=Path(tempfile.mkdtemp(prefix='install-',dir=folder))
+    plan_stage=update_cache.new_stage(folder)
+    update_cache.mark(plan_stage,'stage',archive=str(archive))
     plan = plan_stage/'plan.json'
     plan.write_text(json.dumps({'install_dir':str(install),'archive':str(archive),
         'sha256':expected['sha256'],'version':info['version'],'pid':os.getpid()}),encoding='utf-8')
