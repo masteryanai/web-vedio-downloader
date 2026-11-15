@@ -166,7 +166,7 @@ def check_update():
         timer=QTimer();timer.setInterval(20);timer.timeout.connect(click);timer.start();timers.append(timer)
         QTimer.singleShot(20,window.check_updates);QTimer.singleShot(5000,app.quit)
         return original()
-    with patch.object(QSystemTrayIcon,'isSystemTrayAvailable',return_value=False),patch.object(QApplication,'exec',side_effect=run),patch.object(CloseChoice,'exec',side_effect=AssertionError('update must not ask to hide')),patch('updater.check_update',return_value={'available':True,'version':'99.0.0'}),patch('updater.prepare_update',return_value={'plan':'fixture','helper':'fixture'}),patch('updater.launch_update') as launch:
+    with patch.object(QSystemTrayIcon,'isSystemTrayAvailable',return_value=False),patch.object(QApplication,'exec',side_effect=run),patch.object(CloseChoice,'exec',side_effect=AssertionError('update must not ask to hide')),patch('updater.check_update',return_value={'available':True,'version':'99.0.0'}),patch('updater.prepare_update',return_value={'plan':'fixture','helper':'fixture'}),patch('update_center.UpdateCenter.confirm_restart',return_value=True),patch('updater.launch_update') as launch:
         assert main.gui(Namespace(smoke_ui=False,url=None))==0
         launch.assert_called_once();assert windows[0].desktop.stopped and windows[0].force_exit
         assert preferences.load()['close_action']=='hide'

@@ -101,12 +101,14 @@ def zip_inventory(archive,ver):
 
 
 def verify_tree(root,data,cancel=None,progress=None):
-    validate_inventory(data)
+    validate_inventory(data);total=len(data['files']);done_bytes=0;total_bytes=sum(row['size'] for row in data['files'])
     for i,row in enumerate(data['files']):
         if cancel is not None and cancel.is_set():raise RuntimeError('已取消更新准备。')
         path=owned_path(root,row['path'])
         if not path.is_file() or path.stat().st_size!=row['size'] or digest(path)!=row['sha256']:return False,row['path']
-        if progress and i%50==0:progress({'percent':0,'stage':f'核对本地程序 {i+1}/{len(data["files"])}'})
+        done_bytes+=row['size']
+        if progress and (i%25==0 or i+1==total):progress({'phase':'verify','percent':int((i+1)*100/total),'stage':'核对程序文件',
+            'files_done':i+1,'files_total':total,'processed_bytes':done_bytes,'total_bytes':total_bytes})
     return True,''
 
 
@@ -116,7 +118,7 @@ def differences(base,target):
     return sorted(changed),sorted(set(before)-set(after))
 
 
-def extract_verified(archive,destination,target,changed=None,cancel=None):
+def extract_verified(archive,destination,target,changed=None,cancel=None,*,progress=None,verify_hash=True):
     expected={row['path']:row for row in validate_inventory(target)['files']}
     wanted=set(expected) if changed is None else set(changed);seen=set()
     if not wanted<=set(expected):raise ValueError('差异包包含未声明文件。')
@@ -134,18 +136,23 @@ def extract_verified(archive,destination,target,changed=None,cancel=None):
             if item.file_size!=row['size']:raise ValueError('更新文件大小不符。')
             path=owned_path(destination,name);path.parent.mkdir(parents=True,exist_ok=True)
             with package.open(item) as source,path.open('wb') as output:shutil.copyfileobj(source,output,1024*1024)
-            if digest(path)!=row['sha256']:raise ValueError('更新文件 SHA-256 校验失败。')
+            if verify_hash and digest(path)!=row['sha256']:raise ValueError('更新文件 SHA-256 校验失败。')
+            if progress and (len(seen)%25==0 or len(seen)==len(wanted)):
+                progress({'phase':'extract','percent':int(len(seen)*100/max(1,len(wanted))),'stage':'解压更新文件','files_done':len(seen),'files_total':len(wanted)})
     if seen!={name.casefold() for name in wanted}:raise ValueError('更新包缺少文件。')
 
 
-def assemble_delta(install,archive,destination,base,target,cancel=None,progress=None):
-    valid,_=verify_tree(install,base,cancel,progress)
-    if not valid:raise ValueError('本地基线已变化，不能继续增量更新。')
+def assemble_delta(install,archive,destination,base,target,cancel=None,progress=None,*,base_verified=False,verify_target=True):
+    if not base_verified:
+        valid,_=verify_tree(install,base,cancel,progress)
+        if not valid:raise ValueError('本地基线已变化，不能继续增量更新。')
     changed,deleted=differences(base,target);changed=set(changed)
-    for row in target['files']:
+    unchanged=[row for row in target['files'] if row['path'] not in changed]
+    for i,row in enumerate(unchanged):
         if cancel is not None and cancel.is_set():raise RuntimeError('已取消更新准备。')
-        if row['path'] not in changed:
-            source=owned_path(install,row['path']);path=owned_path(destination,row['path']);path.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,path)
-    extract_verified(archive,destination,target,changed,cancel)
-    if not verify_tree(destination,target,cancel)[0]:raise ValueError('增量组装后的完整程序校验失败。')
+        source=owned_path(install,row['path']);path=owned_path(destination,row['path']);path.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,path)
+        if progress and (i%25==0 or i+1==len(unchanged)):
+            progress({'phase':'copy','percent':int((i+1)*100/max(1,len(unchanged))),'stage':'准备安装：复制可复用程序文件','files_done':i+1,'files_total':len(unchanged)})
+    extract_verified(archive,destination,target,changed,cancel,progress=progress,verify_hash=verify_target)
+    if verify_target and not verify_tree(destination,target,cancel,progress)[0]:raise ValueError('增量组装后的完整程序校验失败。')
     return deleted

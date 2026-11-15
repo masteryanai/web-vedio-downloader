@@ -14,7 +14,7 @@ def download(path,expected,open_response,cancel,progress):
     def check():
         if cancel.is_set():raise RuntimeError('已取消更新下载，已保留进度；再次更新可续传。')
     def report(count,stage,speed=0):
-        progress({'percent':min(95,int(count*95/total)),'stage':stage,'bytes':count,'total':total,'speed':speed})
+        progress({'phase':'archive_verify' if 'SHA-256' in stage else 'download','percent':min(95,int(count*95/total)),'stage':stage,'bytes':count,'total':total,'speed':speed})
     check()
     for attempt in range(ATTEMPTS):
         check();offset=path.stat().st_size if path.exists() else 0
@@ -63,9 +63,12 @@ def download(path,expected,open_response,cancel,progress):
         report(path.stat().st_size if path.exists() else 0,f'连接中断或 {READ_TIMEOUT} 秒未收到数据，正在重试 {attempt+1}/{ATTEMPTS-1}')
         if cancel.wait(min(2, .3*(attempt+1))):check()
     check();report(total,'正在校验更新包 SHA-256')
-    digest=hashlib.sha256()
+    digest=hashlib.sha256();verified=0;last_hash_report=0
     with path.open('rb') as stream:
-        while chunk:=stream.read(1024*1024):check();digest.update(chunk)
+        while chunk:=stream.read(1024*1024):
+            check();digest.update(chunk);verified+=len(chunk);now=time.monotonic()
+            if now-last_hash_report>=.1 or verified==total:
+                progress({'phase':'archive_verify','percent':int(verified*100/total),'stage':'校验下载包 SHA-256','processed_bytes':verified,'total_bytes':total});last_hash_report=now
     if path.stat().st_size!=total or digest.hexdigest()!=expected['sha256']:
         path.unlink(missing_ok=True)
         raise RuntimeError('更新包 SHA-256 校验失败，已移除损坏缓存；请重试，当前程序未更改。')

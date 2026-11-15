@@ -94,7 +94,7 @@ try {
         $state.ignored_version=$base.version;$state | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $stateFile -Encoding UTF8
     }
     if(-not $NoLaunch){
-        $started=Start-Process -FilePath (Join-Path $root 'WebVideoDownloader.exe') -WorkingDirectory $root -WindowStyle Hidden -PassThru
+        $started=Start-Process -FilePath (Join-Path $root 'WebVideoDownloader.exe') -WorkingDirectory $root -WindowStyle Normal -PassThru
         Start-Sleep -Seconds 2
         if($started.HasExited -and $started.ExitCode -ne 0){throw 'Updated application failed to start.'}
     }
@@ -138,6 +138,6 @@ try {
         if($config.operation -eq 'rollback'){if($null -ne $oldStateText){$oldStateText | Set-Content -LiteralPath $stateFile -Encoding UTF8}else{Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue}}
     }
     Result @{ok=$false;error=$failure;restore_error=$restoreError;backup=$backup}
-    if(-not $NoLaunch -and -not $blockedByInstaller -and -not $restoreError -and (Test-Path -LiteralPath (Join-Path $root 'WebVideoDownloader.exe'))){try{Start-Process -FilePath (Join-Path $root 'WebVideoDownloader.exe') -WorkingDirectory $root -WindowStyle Hidden}catch{}}
+    if(-not $NoLaunch -and -not $blockedByInstaller -and -not $restoreError -and (Test-Path -LiteralPath (Join-Path $root 'WebVideoDownloader.exe'))){try{Start-Process -FilePath (Join-Path $root 'WebVideoDownloader.exe') -WorkingDirectory $root -WindowStyle Normal}catch{}}
     exit 1
 }finally{if($installLock){$installLock.Dispose()}}

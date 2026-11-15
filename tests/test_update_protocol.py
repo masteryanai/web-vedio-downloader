@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -29,7 +30,14 @@ class UpdateProtocol(unittest.TestCase):
         self.base=protocol.tree_inventory(self.install,'0.8.0');self.target=protocol.tree_inventory(self.new,'0.9.0')
         write(self.install,protocol.INSTALLATION,protocol.canonical(self.base));self.cancel=threading.Event()
         self.env=patch.dict(os.environ,LOCALAPPDATA=str(self.root/'data'));self.env.start();self.current=patch('update_package.APP_VERSION','0.8.0');self.current.start()
-    def tearDown(self):self.current.stop();self.env.stop();self.temp.cleanup()
+    def tearDown(self):
+        self.current.stop();self.env.stop()
+        for attempt in range(30):
+            try:self.temp.cleanup();break
+            except PermissionError:
+                if attempt==29:raise
+                time.sleep(.05) # The restored C# fixture may still be finishing process shutdown.
+
     def archive(self,changed=None):
         path=self.root/'package.zip'
         with zipfile.ZipFile(path,'w') as output:
@@ -134,6 +142,35 @@ class UpdateProtocol(unittest.TestCase):
         plan=json.loads(Path(prepared['plan']).read_text(encoding='utf-8'))
         self.assertTrue(protocol.verify_tree(plan['payload_dir'],self.target)[0]);self.assertTrue(protocol.verify_tree(self.install,self.base)[0])
         self.assertTrue(Path(prepared['helper']).is_file())
+
+    def test_preview_reads_no_program_bytes_or_remote_inventories(self):
+        with patch('update_package.verify_tree',side_effect=AssertionError('preview hashed files')),patch('update_package.fetch_json',side_effect=AssertionError('preview fetched inventory')):
+            estimate,confirm=packages.preview(self.info())
+        self.assertEqual(estimate['mode'],'delta');self.assertFalse(confirm)
+
+    def test_prepare_hashes_baseline_once_and_target_once(self):
+        info=self.info();changed,_=protocol.differences(self.base,self.target);body=self.archive(changed).read_bytes()
+        info['manifest']['deltas'][0].update(size=len(body),sha256=hashlib.sha256(body).hexdigest())
+        class Response(io.BytesIO):
+            headers={'Content-Length':str(len(body))}
+            def getcode(self):return 200
+        with patch('update_package.fetch_json',side_effect=[self.target,self.base]),patch('updater.request',return_value=Response(body)),patch('sys.frozen',True,create=True),patch('sys.executable',str(self.install/'WebVideoDownloader.exe')),patch('update_package.verify_tree',wraps=protocol.verify_tree) as verify,patch('update_protocol.verify_tree',side_effect=AssertionError('duplicate assembly scan')):
+            packages.prepare(info,self.cancel,lambda _:None)
+        self.assertEqual(verify.call_count,2)
+        self.assertEqual(Path(verify.call_args_list[0].args[0]),self.install)
+        self.assertEqual(Path(verify.call_args_list[1].args[0]).name,'payload')
+
+    def test_source_change_after_baseline_check_is_detected_by_final_target_hash(self):
+        info=self.info();changed,_=protocol.differences(self.base,self.target);body=self.archive(changed).read_bytes()
+        info['manifest']['deltas'][0].update(size=len(body),sha256=hashlib.sha256(body).hexdigest())
+        class Response(io.BytesIO):
+            headers={'Content-Length':str(len(body))}
+            def getcode(self):return 200
+        def response(*args,**kwargs):
+            write(self.install,'_internal/runtime.dll',b'changed after preflight')
+            return Response(body)
+        with patch('update_package.fetch_json',side_effect=[self.target,self.base]),patch('updater.request',side_effect=response),patch('sys.frozen',True,create=True),patch('sys.executable',str(self.install/'WebVideoDownloader.exe')),self.assertRaises(packages.FullConfirmation):
+            packages.prepare(info,self.cancel,lambda _:None)
 
     def test_polling_backoff_ignore_and_snooze_do_not_erase_known_release(self):
         state={};update_state.succeeded(state,{'available':True,'version':'99.0.0'},now=100)

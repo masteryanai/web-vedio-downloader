@@ -40,3 +40,31 @@ def previous_failure():
         if not info.get('ok'):return '上次更新失败，已尝试恢复原版本。详情见更新日志或独立修复入口。'
     except (OSError,ValueError,KeyError,TypeError):pass
     return ''
+
+
+def result_notice():
+    """Read an installer outcome only for this installation, once per result."""
+    from runtime import app_data_dir
+    try:
+        updates=(app_data_dir()/'updates').resolve();pointer=updates/'last-install.json'
+        data=json.loads(pointer.read_text(encoding='utf-8-sig'));stage=Path(data['stage']).resolve()
+        if stage.parent!=updates or not stage.name.startswith(('install-','recovery-')):return None
+        plan=json.loads((stage/'plan.json').read_text(encoding='utf-8-sig'))
+        if Path(plan['install_dir']).resolve()!=Path(sys.executable).resolve().parent:return None
+        file=stage/'result.json'
+        if not file.exists():return None
+        token=str(stage)+':'+str(file.stat().st_mtime_ns)+':'+APP_VERSION;ack=updates/'result-notice.json'
+        if ack.exists() and json.loads(ack.read_text(encoding='utf-8')).get('token')==token:return None
+        result=json.loads(file.read_text(encoding='utf-8-sig'))
+        if result.get('ok'):
+            ok=plan['version']==APP_VERSION
+            message=f'已更新至 v{APP_VERSION}，版本核对成功。' if ok else f'更新记录目标为 v{plan["version"]}，当前运行版本为 v{APP_VERSION}，请检查启动目录或使用独立修复入口。'
+        else:
+            ok=False;message='上次更新未完成：'+str(result.get('error','安装失败'))[:300]+'；原版本已保留，可重试或使用独立修复入口。'
+        ack.write_text(json.dumps({'token':token}),encoding='utf-8')
+        ready=updates/'prepared.json'
+        if ok and ready.exists():
+            cached=json.loads(ready.read_text(encoding='utf-8'))
+            if Path(cached['prepared']['plan']).resolve()==stage/'plan.json':ready.unlink()
+        return {'ok':ok,'message':message}
+    except (OSError,ValueError,KeyError,TypeError):return None

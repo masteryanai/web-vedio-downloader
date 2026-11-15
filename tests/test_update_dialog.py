@@ -27,8 +27,8 @@ def check():
         dialog=app.activeModalWidget()
         if not dialog:return
         if dialog.install.isEnabled() and not seen:dialog.install.click()
-        if 'MiB/s' in dialog.label.text() and not seen:
-            seen.append(dialog.label.text());assert dialog.bar.value()==52
+        if 'MiB/s' in dialog.metrics.text() and not seen:
+            seen.append(dialog.label.text()+' '+dialog.metrics.text()+' '+dialog.progress_detail.text());assert dialog.bar.value()==50
             if os.environ.get('UPDATE_DIALOG_SCREENSHOT'):dialog.grab().save(os.environ['UPDATE_DIALOG_SCREENSHOT'])
             dialog.reject()
     timer.timeout.connect(drive);timer.start()

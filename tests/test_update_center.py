@@ -48,7 +48,7 @@ def check():
         scheduler.failed('offline');assert scheduler.badge.isVisible()
     entries=[{'version':ver,'rollback_allowed':allowed,'package':{},'inventory':{},'data_schema':1,'notes':'# History'} for ver,allowed in [('0.8.0',True),('0.7.0',False),('0.6.2',True)]]
     dialog.catalog_manifest={'version':'99.0.1'}
-    with patch('update_package.history',return_value=entries),patch('update_package.select',return_value={'mode':'full','size':100,'reason':'历史完整包'}):
+    with patch('update_package.history',return_value=entries),patch('update_package.preview',return_value=({'mode':'full','size':100,'reason':'历史完整包'},False)):
         dialog.show();dialog.load_history();settle(lambda:not dialog.busy())
         assert dialog.versions.count()==4 and not dialog.versions.model().item(2).isEnabled()
         dialog.versions.setCurrentIndex(1);settle(lambda:not dialog.busy())

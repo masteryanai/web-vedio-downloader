@@ -69,6 +69,20 @@ def history(manifest):
     return entries
 
 
+def preview(info):
+    """Estimate package mode without reading installed program file contents."""
+    manifest=info['manifest'];operation=info.get('operation','upgrade')
+    if operation=='rollback':
+        backup=backup_info(Path(sys.executable).resolve().parent)
+        if backup and backup['version']==info['version']:
+            return {'mode':'local','size':0,'reason':'预计使用本地备份；准备安装时校验'},False
+    delta=next((d for d in manifest.get('deltas',[]) if d.get('from_version')==APP_VERSION),None)
+    reason=(manifest.get('force_full_reason') or '发行版本要求全量更新') if manifest.get('force_full') else manifest.get('full_only_from',{}).get(APP_VERSION,'')
+    if operation=='upgrade' and delta and not reason:
+        return {'mode':'delta','size':delta['size'],'reason':'下载前检查本地文件，确定能否增量'},False
+    return {'mode':'full','size':manifest['size'],'reason':reason or ('历史回退使用完整包' if operation=='rollback' else '没有匹配增量包，需要确认使用完整包')},operation=='upgrade' and not bool(reason)
+
+
 def select(info,install=None,cancel=None,progress=None,allow_full=False):
     install=Path(install or Path(sys.executable).resolve().parent)
     local=backup_info(install) if info.get('local_restore') else None
@@ -89,7 +103,7 @@ def select(info,install=None,cancel=None,progress=None,allow_full=False):
         published=validate_inventory(fetch_json(delta['base_inventory']))
         if published['version']!=APP_VERSION:raise ValueError('增量基线版本错误。')
         base=published
-        if verify_tree(install,base,cancel,progress)[0]:
+        if verify_tree(install,base,cancel,(lambda value:progress({**value,'phase':'baseline','stage':'检查本地文件是否支持增量更新'})) if progress else None)[0]:
             if delta.get('deleted')!=differences(base,target)[1]:raise ValueError('增量删除清单与文件清单不一致。')
             asset_url(delta)
             return {'mode':'delta','reason':'本地基线完整，优先增量更新','target':target,'base':base,'package':delta,'size':delta['size']}
@@ -110,20 +124,24 @@ def prepare(info,cancel,progress):
     plan=select(info,install,cancel,progress,info.get('allow_full',False));folder=app_data_dir()/'updates';folder.mkdir(parents=True,exist_ok=True)
     stage=Path(tempfile.mkdtemp(prefix='install-',dir=folder));payload=stage/'payload';payload.mkdir()
     if plan['mode']=='local':
-        for row in plan['target']['files']:
+        for i,row in enumerate(plan['target']['files']):
             if cancel.is_set():raise RuntimeError('已取消更新。')
             source=owned_path(plan['backup']['folder'],row['path']);dest=owned_path(payload,row['path']);dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest)
+            if i%25==0 or i+1==len(plan['target']['files']):progress({'phase':'copy','percent':int((i+1)*100/len(plan['target']['files'])),'stage':'准备本地备份恢复','files_done':i+1,'files_total':len(plan['target']['files'])})
     else:
         desc=plan['package'];cache=folder/('package-'+desc['sha256']);cache.mkdir(exist_ok=True);archive=cache/'package.zip'
         from update_transfer import download
         from diagnostics import file_lock
         with file_lock(cache):download(archive,desc,lambda headers,timeout:updater.request(asset_url(desc),asset=True,headers=headers,timeout=timeout),cancel,progress)
-        progress({'percent':96,'stage':'正在组装并校验完整程序'})
+        progress({'phase':'copy','percent':0,'stage':'下载完成，正在准备安装'})
         if plan['mode']=='delta':
-            if not verify_tree(install,plan['base'],cancel,progress)[0]:raise FullConfirmation('准备期间本地基线发生变化，是否改用完整包？')
-            assemble_delta(install,archive,payload,plan['base'],plan['target'],cancel)
-        else:extract_verified(archive,payload,plan['target'],cancel=cancel)
-    if not verify_tree(payload,plan['target'],cancel)[0]:raise ValueError('准备后的程序校验失败。')
+            assemble_delta(install,archive,payload,plan['base'],plan['target'],cancel,progress,base_verified=True,verify_target=False)
+        else:extract_verified(archive,payload,plan['target'],cancel=cancel,progress=progress,verify_hash=False)
+    valid,bad=verify_tree(payload,plan['target'],cancel,progress)
+    if not valid:
+        message='准备后的目标文件校验失败：'+bad
+        if plan['mode']=='delta':raise FullConfirmation(message+'，可改用完整包。')
+        raise ValueError(message+'，请重新准备更新包。')
     if cancel.is_set():raise RuntimeError('已取消更新。')
     config={'schema':2,'install_dir':str(install),'payload_dir':str(payload),'version':info['version'],
         'from_version':APP_VERSION,'pid':os.getpid(),'operation':info.get('operation','upgrade'),'data_dir':str(app_data_dir())}
