@@ -52,19 +52,33 @@ def check():
         queue.active['a']=(None,None,threading.Event());queue.waiting.append(('b',[]))
         queue.snapshots['a']={'phase':'download','speed':2*1024**2,'_speed_at':time.monotonic()}
         desktop.refresh();assert '2.0 MiB/s' in window.total_speed_label.text()
-        panel.rotate();assert panel.page_id=='a' and panel.title.text()=='video A'
-        panel.rotate();assert panel.page_id is None # queued B never gets a page.
+        assert panel.size().width()==160 and panel.height()==60
+        assert panel.page_id is None and panel.title.text()=='总速度' and panel.detail.text()=='2.0 MiB/s',(panel.page_id,panel.title.text(),panel.detail.text(),panel.expanded_size().width(),panel.detail.font().pixelSize(),panel.detail.fontMetrics().horizontalAdvance(panel.detail.text()))
+        panel.rotate();assert panel.page_id=='progress' and panel.title.text()=='总进度'
+        panel.rotate();assert panel.page_id==('task','a') and panel.title.toolTip()=='video A'
+        assert panel.detail.text()=='2.0 MiB/s' and panel.bar.format()=='50.0%'
+        panel.rotate();assert panel.page_id is None # queued B never gets a speed page.
+        assert '\n' not in panel.detail.text()
+
+        queue.batch_rows['c']={'id':'c','title':'很长的第二个下载任务名称用于检查省略显示','state':'running','total_bytes':200,'download_percent':25}
+        queue.active['c']=(None,None,threading.Event());queue.snapshots['c']={'phase':'download','speed':9999*1024**3,'_speed_at':time.monotonic()}
+        desktop.refresh();assert panel.pages()==[None,'progress',('task','a'),('task','c')]
+        for expected in ('progress',('task','a'),('task','c')):panel.rotate();assert panel.page_id==expected
+        settle();assert 'GiB/s' in panel.detail.text() and panel.detail.sizeHint().width()<=panel.content.width()
+        assert '很长的第二个' in panel.title.toolTip()
+        queue.active.pop('c');queue.batch_rows['c']['state']='paused';desktop.refresh()
+        assert panel.page_id is None and ('task','c') not in panel.pages()
         queue.on_progress('a',{'phase':None,'stage':'校验视频完整性'});desktop.refresh()
         assert '0 B/s' in window.total_speed_label.text() and not panel.stats['transfers']
         area=panel.area();panel.expanded_pos=QPoint(area.left(),area.top()+100);panel.edge='left';panel.ensure_visible()
         with patch.object(panel,'underMouse',return_value=False):
             QApplication.sendEvent(panel,QEvent(QEvent.Type.Leave));assert panel.hide_timer.isActive()
             panel.hide_timer.setInterval(30);settle(.08)
-            assert panel.collapsed and panel.width()==24 and panel.x()==area.left()
+            assert panel.collapsed and panel.height()==48 and panel.width()==24 and panel.x()==area.left()
         screenshot=os.environ.get('DESKTOP_SCREENSHOT')
         if screenshot:panel.grab().save(str(Path(screenshot).with_stem(Path(screenshot).stem+'-tab')))
         QApplication.sendEvent(panel,QEnterEvent(QPointF(2,5),QPointF(2,5),QPointF(panel.mapToGlobal(QPoint(2,5)))))
-        assert not panel.collapsed and panel.width()==320
+        assert not panel.collapsed and panel.width()==160
         # Drag from the left edge to the right edge using actual mouse events.
         def mouse(kind,local,global_point,button,buttons):
             QApplication.sendEvent(panel,QMouseEvent(kind,QPointF(local),QPointF(global_point),button,buttons,Qt.KeyboardModifier.NoModifier))

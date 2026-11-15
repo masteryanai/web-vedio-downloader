@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt,QObject,QTimer,QPoint,QRect,Signal
 from PySide6.QtGui import QGuiApplication,QIcon,QPixmap,QPainter,QColor,QPen
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
-    QCheckBox,QSpinBox,QComboBox,QFrame,QProgressBar,QMenu,QSystemTrayIcon,QMessageBox)
+    QCheckBox,QSpinBox,QComboBox,QFrame,QProgressBar,QMenu,QSystemTrayIcon,QMessageBox,QSizePolicy)
 import preferences
 import diagnostics
 from transfer_stats import speed_text,overview
@@ -52,7 +52,7 @@ class SettingsDialog(QDialog):
         self.auto_check=QCheckBox('自动检查更新（只提示，不自动下载安装）');self.auto_check.setChecked(cfg['auto_check_updates']);layout.addWidget(self.auto_check)
         row=QHBoxLayout();row.addWidget(QLabel('检查间隔（小时）'))
         self.check_interval=QSpinBox();self.check_interval.setRange(1,168);self.check_interval.setValue(cfg['update_interval_hours']);row.addWidget(self.check_interval);layout.addLayout(row)
-        note=QLabel('悬浮框每 3 秒轮播概况与正在传输的任务。\n降低并行上限不会中断正在运行的任务。');note.setWordWrap(True);layout.addWidget(note)
+        note=QLabel('悬浮框每 3 秒轮播总速度、总进度和各下载任务速度。\n降低并行上限不会中断正在运行的任务。');note.setWordWrap(True);layout.addWidget(note)
         self.error=QLabel();self.error.setWordWrap(True);layout.addWidget(self.error)
         save=QPushButton('保存');save.clicked.connect(self.apply);layout.addWidget(save)
         desktop.preferences_changed.connect(self.sync)
@@ -74,16 +74,18 @@ class FloatingPanel(QFrame):
         self.pressed=False;self.dragging=False;self.menu_open=False;self.page_id=None;self.stats=None
         self.setObjectName('floatingMonitor');self.setStyleSheet('#floatingMonitor {background:#f5f8ff;border:1px solid #8ca9df;border-radius:7px;}')
         self.setWindowTitle('下载悬浮框');self.setMouseTracking(True);self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.layout_box=QVBoxLayout(self);self.layout_box.setContentsMargins(10,8,10,8)
+        self.layout_box=QVBoxLayout(self);self.layout_box.setContentsMargins(6,6,6,6)
         self.content=QFrame();box=QVBoxLayout(self.content);box.setContentsMargins(0,0,0,0);box.setSpacing(4)
-        self.title=QLabel('本轮下载');self.detail=QLabel();self.detail.setWordWrap(True)
-        self.bar=QProgressBar();self.bar.setFixedHeight(20)
-        for widget in (self.title,self.bar,self.detail):box.addWidget(widget)
+        self.title=QLabel('总速度');self.title.setStyleSheet('font-size:11px;');self.title.setMinimumWidth(0);self.title.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred)
+        self.detail=QLabel('0 B/s');self.detail.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+        self.detail.setStyleSheet('font-size:12px;font-weight:600;color:#285ed4;');self.detail.setSizePolicy(QSizePolicy.Policy.Fixed,QSizePolicy.Policy.Preferred)
+        row=QHBoxLayout();row.setContentsMargins(0,0,0,0);row.setSpacing(4);row.addWidget(self.title,1);row.addWidget(self.detail);box.addLayout(row)
+        self.bar=QProgressBar();self.bar.setFixedHeight(18);self.bar.setRange(0,100);self.bar.setValue(0);self.bar.setFormat('暂无任务');box.addWidget(self.bar)
         self.tab=QLabel('下\n载');self.tab.setAlignment(Qt.AlignmentFlag.AlignCenter);self.tab.hide()
         self.layout_box.addWidget(self.content);self.layout_box.addWidget(self.tab)
         for child in self.findChildren(QFrame)+self.findChildren(QLabel)+self.findChildren(QProgressBar):
             child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setFixedSize(320,124)
+        self.setFixedSize(self.expanded_size())
         area=QGuiApplication.primaryScreen().availableGeometry()
         position=cfg['float_position'];self.expanded_pos=QPoint(*position) if position else QPoint(area.right()-self.width()-24,area.bottom()-self.height()-24)
         self.move(self.expanded_pos)
@@ -103,44 +105,53 @@ class FloatingPanel(QFrame):
         return screen.availableGeometry()
     def expanded_size(self):
         from PySide6.QtCore import QSize
-        return QSize(320,124)
+        return QSize(160,60)
     def ensure_visible(self):
         if self.pressed or self.shutting_down:return
         area=self.area();self.expanded_pos=clamp(QRect(self.expanded_pos,self.expanded_size()),area)
         if self.edge=='left':self.expanded_pos.setX(area.left())
-        if self.edge=='right':self.expanded_pos.setX(area.right()-319)
-        if self.collapsed:self.move(area.left() if self.edge=='left' else area.right()-23,self.expanded_pos.y())
+        if self.edge=='right':self.expanded_pos.setX(area.right()-self.expanded_size().width()+1)
+        if self.collapsed:self.move(area.left() if self.edge=='left' else area.right()-self.width()+1,self.expanded_pos.y())
         else:self.move(self.expanded_pos)
     def configure(self,cfg):
         self.cfg=cfg;self.setWindowOpacity(cfg['float_opacity']/100)
         if not cfg['float_auto_hide']:self.hide_timer.stop();self.expand()
         elif self.edge and not self.underMouse():self.hide_timer.start()
+    def pages(self):
+        return [None,'progress']+[('task',row['id']) for row in (self.stats or {}).get('transfers',[])]
     def update_stats(self,stats):
         self.stats=stats
-        if self.page_id not in [row['id'] for row in stats['transfers']]:self.page_id=None
+        if self.page_id not in self.pages():self.page_id=None
         self.render()
     def rotate(self):
         if not self.stats or self.menu_open or self.pressed:return
-        ids=[None]+[row['id'] for row in self.stats['transfers']]
-        self.page_id=ids[(ids.index(self.page_id)+1)%len(ids)] if self.page_id in ids else None;self.render()
+        ids=self.pages();self.page_id=ids[(ids.index(self.page_id)+1)%len(ids)] if self.page_id in ids else None;self.render()
     def render(self):
         if not self.stats:return
-        row=next((row for row in self.stats['transfers'] if row['id']==self.page_id),None)
-        if row:
-            title=row['title'];percent=row.get('download_percent');detail='下载速度 '+speed_text(row['live_speed'])
-        else:
-            title='本轮下载概况';percent=self.stats['percent'];detail=f"总速度 {speed_text(self.stats['speed'])}\n活动 {self.stats['active']} · 排队 {self.stats['queued']} · 解析/处理 {self.stats['processing']}\n暂停/待处理 {self.stats['paused']}"
+        task_id=self.page_id[1] if isinstance(self.page_id,tuple) and self.page_id[0]=='task' else None
+        row=next((row for row in self.stats['transfers'] if row['id']==task_id),None)
+        percent=row.get('download_percent') if row else self.stats['percent']
+        progress=f'{percent:.1f}%' if percent is not None else '暂无任务' if not self.stats['count'] else '总量未知'
+        if row:title=row['title'];value=speed_text(row['live_speed'])
+        elif self.page_id=='progress':title='总进度';value=progress
+        else:title='总速度';value=speed_text(self.stats['speed'])
         from PySide6.QtGui import QFontMetrics
-        self.title.setText(QFontMetrics(self.title.font()).elidedText(title,Qt.TextElideMode.ElideRight,292))
-        self.title.setToolTip(title);self.detail.setText(detail);self.setToolTip(title+'\n'+detail)
-        self.bar.setRange(0,100);self.bar.setValue(int(percent or 0));self.bar.setFormat(f'{percent:.1f}%' if percent is not None else '暂无任务' if not self.stats['count'] else '总量未知')
+        from PySide6.QtGui import QFont
+        font=QFont(self.detail.font());font.setPixelSize(12)
+        while QFontMetrics(font).horizontalAdvance(value)>120 and font.pixelSize()>9:font.setPixelSize(font.pixelSize()-1)
+        if self.detail.font().pixelSize()!=font.pixelSize():self.detail.setStyleSheet(f'font-size:{font.pixelSize()}px;font-weight:600;color:#285ed4;')
+        available=max(0,self.expanded_size().width()-14-4-QFontMetrics(font).horizontalAdvance(value))
+        self.title.setText(QFontMetrics(self.title.font()).elidedText(title,Qt.TextElideMode.ElideRight,available))
+        self.title.setToolTip(title);self.detail.setText(value)
+        self.setToolTip(title+' · '+value+'\n'+('当前任务进度 ' if row else '整体进度 ')+progress)
+        self.bar.setRange(0,100);self.bar.setValue(int(percent or 0));self.bar.setFormat(progress)
     def collapse(self):
         if self.shutting_down or not self.edge or not self.cfg['float_auto_hide'] or self.pressed or self.menu_open or self.underMouse():return
         self.expanded_pos=self.pos();self.collapsed=True;self.content.hide();self.tab.show()
-        self.layout_box.setContentsMargins(1,2,1,2);self.setFixedSize(24,80);self.ensure_visible()
+        self.layout_box.setContentsMargins(1,2,1,2);self.setFixedSize(24,48);self.ensure_visible()
     def expand(self):
         if not self.collapsed:return
-        self.collapsed=False;self.tab.hide();self.content.show();self.layout_box.setContentsMargins(10,8,10,8)
+        self.collapsed=False;self.tab.hide();self.content.show();self.layout_box.setContentsMargins(6,6,6,6)
         self.setFixedSize(self.expanded_size());self.ensure_visible()
     def enterEvent(self,event):self.hide_timer.stop();self.expand();super().enterEvent(event)
     def leaveEvent(self,event):
