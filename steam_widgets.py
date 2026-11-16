@@ -26,10 +26,6 @@ class EdgeResize(QObject):
     def __init__(self,window):
         super().__init__(window);self.window=window;QApplication.instance().installEventFilter(self)
     def eventFilter(self,obj,event):
-        if event.type()==QEvent.Type.Resize and obj is self.window and hasattr(self.window,'workspace'):
-            ws=self.window.workspace
-            ws.banner.setFixedHeight(max(155,min(290,int(self.window.height()*.31))))
-            ws.episodes.setColumnHidden(2,self.window.width()<1100)
         if event.type()==QEvent.Type.MouseButtonPress and event.button()==Qt.MouseButton.LeftButton and not self.window.isMaximized() and hasattr(obj,'window') and obj.window() is self.window:
             p=self.window.mapFromGlobal(event.globalPosition().toPoint());r=self.window.rect();edges=Qt.Edge(0)
             if p.x()<6:edges|=Qt.Edge.LeftEdge
