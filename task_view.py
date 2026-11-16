@@ -1,9 +1,10 @@
 """Task browsing, filtering and ID-based actions, independent of download workers."""
-from PySide6.QtCore import Qt, QTimer, QEvent, QSignalBlocker
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtCore import Qt, QTimer, QEvent, QSignalBlocker, QRect, QUrl
+from PySide6.QtGui import QFontMetrics, QColor, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,QTabBar,
     QTableWidget,QTableWidgetItem,QHeaderView,QAbstractItemView,QProgressBar,
-    QPushButton,QMessageBox,QStyledItemDelegate,QWidget,QRadioButton,QDialogButtonBox)
+    QPushButton,QMessageBox,QStyledItemDelegate,QWidget,QRadioButton,QDialogButtonBox,QStyle,QStyleOptionButton)
+from pathlib import Path
 from transfer_stats import row_speed,speed_text
 import download_tasks as tasks
 
@@ -48,6 +49,63 @@ class ElidingDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+class DownloadRowDelegate(ElidingDelegate):
+    """Wide Steam-style rows; the table model remains the action identity boundary."""
+    def __init__(self,table,dialog):
+        super().__init__(table);self.dialog=dialog;self.covers={}
+
+    def editorEvent(self,event,model,option,index):
+        if event.type()==QEvent.Type.MouseButtonRelease and event.button()==Qt.MouseButton.LeftButton and event.position().x()<option.rect.x()+34:
+            checked=index.data(Qt.ItemDataRole.CheckStateRole)==Qt.CheckState.Checked.value
+            return model.setData(index,Qt.CheckState.Unchecked.value if checked else Qt.CheckState.Checked.value,Qt.ItemDataRole.CheckStateRole)
+        return super().editorEvent(event,model,option,index)
+
+    def paint(self,painter,option,index):
+        dialog=self.dialog
+        task=dialog.visible.get(index.data(Qt.ItemDataRole.UserRole))
+        if not task:return
+        painter.save();painter.setClipRect(option.rect)
+        rect=option.rect
+        selected=bool(option.state & QStyle.StateFlag.State_Selected)
+        painter.fillRect(rect,QColor('#3e4652' if selected else '#2b3038'))
+        if dialog.current_group()==0 and (index.row()==0 or group_of(dialog.visible[dialog.table.item(index.row()-1,0).data(Qt.ItemDataRole.UserRole)])!=group_of(task)):
+            painter.setPen(QColor('#c5d0dc'));painter.drawText(rect.adjusted(8,0,-8,0),Qt.AlignmentFlag.AlignTop,{1:'即将进行',2:'已完成',3:'已取消'}[group_of(task)])
+            painter.setPen(QColor('#454b55'));painter.drawLine(rect.x()+110,rect.y()+12,rect.right()-8,rect.y()+12)
+            rect=rect.adjusted(0,28,0,0)
+        check=QStyleOptionButton();check.rect=QRect(rect.x()+8,rect.center().y()-9,18,18)
+        check.state=QStyle.StateFlag.State_Enabled | (QStyle.StateFlag.State_On if index.data(Qt.ItemDataRole.CheckStateRole)==Qt.CheckState.Checked.value else QStyle.StateFlag.State_Off)
+        self.parent().style().drawControl(QStyle.ControlElement.CE_CheckBox,check,painter,self.parent())
+        cover=QRect(rect.x()+36,rect.y()+13,128,72)
+        painter.fillRect(cover,QColor('#172331'))
+        source=dialog.cover_provider(task) if dialog.cover_provider else task.get('cover') or task.get('thumbnail') or ''
+        source=str(source or '')
+        if source not in self.covers:
+            if len(self.covers)>=128:self.covers.clear()
+            self.covers[source]=QPixmap(source) if source and Path(source).is_file() else QPixmap()
+        pixmap=self.covers[source]
+        if not pixmap.isNull():
+            painter.drawPixmap(cover,pixmap.scaled(cover.size(),Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation))
+        else:
+            painter.setPen(QColor('#66c0f4'));font=painter.font();font.setPointSize(23);painter.setFont(font)
+            painter.drawText(cover,Qt.AlignmentFlag.AlignCenter,'▶')
+        left=cover.right()+20;width=max(0,rect.right()-left-18)
+        font=option.font;font.setPointSize(11);painter.setFont(font);painter.setPen(QColor('#f1f3f5'))
+        painter.drawText(QRect(left,rect.y()+16,width,25),Qt.AlignmentFlag.AlignVCenter,painter.fontMetrics().elidedText(index.data(),Qt.TextElideMode.ElideRight,width))
+        font.setPointSize(9);painter.setFont(font);painter.setPen(QColor('#a5b4c4'))
+        detail=f"{task.get('site','')}  ·  {task.get('output','')}"
+        painter.drawText(QRect(left,rect.y()+43,width,19),Qt.AlignmentFlag.AlignVCenter,painter.fontMetrics().elidedText(detail,Qt.TextElideMode.ElideRight,width))
+        state=dialog.table.item(index.row(),3).text();speed=dialog.table.item(index.row(),5).text()
+        percent=task.get('download_percent');completed=task['state']=='completed'
+        label=state+('  ·  '+speed if task['state']=='running' else '')
+        if isinstance(percent,(int,float)):label+=f'  ·  {percent:.1f}%'
+        painter.setPen(QColor('#8fce61' if completed else '#66c0f4'))
+        painter.drawText(QRect(left,rect.y()+67,width,18),Qt.AlignmentFlag.AlignVCenter,painter.fontMetrics().elidedText(label,Qt.TextElideMode.ElideRight,width))
+        if task['state'] not in tasks.TERMINAL:
+            progress=QRect(left,rect.y()+91,width,3);painter.fillRect(progress,QColor('#1b2028'))
+            painter.fillRect(QRect(progress.x(),progress.y(),int(progress.width()*max(0,min(100,percent or 0))/100),3),QColor('#1a9fff'))
+        painter.restore()
+
+
 class DeleteDialog(QDialog):
     def __init__(self,parent=None):
         super().__init__(parent)
@@ -66,9 +124,9 @@ class DeleteDialog(QDialog):
 
 
 class TaskDialog(QDialog):
-    def __init__(self,queue,resume,parent=None):
+    def __init__(self,queue,resume,parent=None,cover_provider=None):
         super().__init__(parent)
-        self.queue=queue;self.resume_task=resume;self.all_rows=[];self.visible={}
+        self.queue=queue;self.resume_task=resume;self.all_rows=[];self.visible={};self.cover_provider=cover_provider
         self.fit_pending=False;self.closing=False;self.checked_ids=set();self.status_default_width=None
         self.setWindowTitle('下载任务');self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         layout=QVBoxLayout(self)
@@ -79,19 +137,23 @@ class TaskDialog(QDialog):
         layout.addWidget(self.tabs)
         self.search=QLineEdit();self.search.setClearButtonEnabled(True)
         self.search.setPlaceholderText('搜索作品名、网站或保存路径（当前分组）');layout.addWidget(self.search)
-        self.table=QTableWidget(0,6);table=self.table
+        self.group_heading=QLabel();self.group_heading.setStyleSheet('color:#d7e1eb;font-size:18px;padding:14px 4px 6px;border-bottom:1px solid #454b55;');layout.addWidget(self.group_heading)
+        self.table=QTableWidget(0,7);table=self.table
         table.setHorizontalHeaderLabels(['作品','进度','网站','状态','保存位置','下载速度'])
         table.horizontalHeader().moveSection(5,2)
         table.horizontalHeaderItem(4).setTextAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
         table.horizontalHeader().setStretchLastSection(False)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         table.setWordWrap(False);table.setTextElideMode(Qt.TextElideMode.ElideNone)
-        table.setItemDelegateForColumn(0,ElidingDelegate(table))
+        table.setItemDelegateForColumn(0,DownloadRowDelegate(table,self))
         table.setItemDelegateForColumn(3,ElidingDelegate(table))
         table.setItemDelegateForColumn(5,ElidingDelegate(table))
         table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        table.verticalHeader().setDefaultSectionSize(32)
-        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.verticalHeader().setDefaultSectionSize(108)
+        table.verticalHeader().hide();table.horizontalHeader().hide();table.setShowGrid(False)
+        for column in (1,2,3,4,5):table.setColumnHidden(column,True)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        table.setStyleSheet('QTableWidget{background:#2b3038;border:0;} QTableWidget::item{border:0;}')
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -138,15 +200,9 @@ class TaskDialog(QDialog):
         self.fit_pending=False
         if self.closing:return
         width=self.table.viewport().width()
-        title=max(380,int(width*.34))
-        metrics=QFontMetrics(self.table.font())
-        status=max(metrics.horizontalAdvance(text) for text in STATUS_TEXTS)+metrics.horizontalAdvance('  ')+12
-        if status!=self.status_default_width:
-            self.table.setColumnWidth(3,status);self.status_default_width=status
-        paths={row['output'] for row in self.visible.values()}
-        natural=max([240]+[metrics.horizontalAdvance(path)+30 for path in paths])
-        for column,size in ((0,title),(1,160),(2,100),(5,120),(4,max(natural,width-title-380-self.table.columnWidth(3)))):
-            self.table.setColumnWidth(column,size)
+        actions=140 if width>=650 else 108
+        self.table.setColumnWidth(6,actions)
+        self.table.setColumnWidth(0,max(1,width-actions))
 
     def current_group(self):return self.tabs.tabData(self.tabs.currentIndex())
 
@@ -164,7 +220,9 @@ class TaskDialog(QDialog):
         counts=[len(self.all_rows)]+[sum(group_of(row)==group for row in self.all_rows) for group in (1,2,3)]
         for i,(group,name) in enumerate(TABS):self.tabs.setTabText(i,f'{name} ({counts[group]})')
         group=self.current_group();query=self.search.text()
-        rows=[row for row in self.all_rows if matches(row,group,query)]
+        rows=sorted([row for row in self.all_rows if matches(row,group,query)],key=group_of)
+        names={1:'即将进行',2:'已完成',3:'已取消',0:'全部下载'}
+        self.group_heading.setText(f'{names[group]}  ({len(rows)})')
         old_ids=list(self.visible);ids=[row['id'] for row in rows]
         self.checked_ids.intersection_update(ids)
         scroll=0 if reset_scroll else self.table.horizontalScrollBar().value()
@@ -174,6 +232,8 @@ class TaskDialog(QDialog):
                 self.table.setRowCount(0);self.table.setRowCount(len(rows))
             self.visible={row['id']:row for row in rows}
             for i,task in enumerate(rows):
+                section=group==0 and (i==0 or group_of(rows[i-1])!=group_of(task))
+                self.table.setRowHeight(i,136 if section else 108)
                 state=TASK_STATES.get(task['state'],task.get('stage') or '准备中')
                 if task['state']=='running' and task['id'] not in self.queue.active:state='其他窗口运行或上次中断'
                 for j,value in ((0,task['title']),(2,task['site']),(3,state),(4,task['output']),(5,speed_text(row_speed(self.queue,task)))):
@@ -183,6 +243,7 @@ class TaskDialog(QDialog):
                     item.setText(display.replace('\r',' ').replace('\n',' ') if j in (0,3) else display)
                     item.setToolTip(value)
                     if j==0:
+                        item.setToolTip(f"{task['title']}\n{task.get('site','')} · {state}\n{task.get('output','')}")
                         item.setData(Qt.ItemDataRole.UserRole,task['id'])
                         item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable)
                         item.setCheckState(Qt.CheckState.Checked if task['id'] in self.checked_ids else Qt.CheckState.Unchecked)
@@ -196,6 +257,23 @@ class TaskDialog(QDialog):
                 percent=task.get('download_percent');bar.setRange(0,100);bar.setValue(int(percent or 0))
                 bar.setFormat(f'{percent:.1f}%' if isinstance(percent,(int,float)) else '总量未知')
                 bar.setTextVisible(True)
+                action=self.table.cellWidget(i,6)
+                if action is None:
+                    action=QWidget();box=QVBoxLayout(action);box.setContentsMargins(8,20,12,20)
+                    button=QPushButton();box.addWidget(button);self.table.setCellWidget(i,6,action)
+                else:button=action.findChild(QPushButton)
+                if getattr(button,'task_connected',False):button.clicked.disconnect()
+                button.task_connected=True
+                task_id=task['id'];completed=task['state']=='completed'
+                if completed:
+                    button.setText('▶  打开文件');button.setEnabled(bool(task.get('result',{}).get('path')))
+                    button.clicked.connect(lambda checked=False,key=task_id:self.open_result(key))
+                    button.setStyleSheet('QPushButton{background:#5c9e24;color:white;border:0;padding:10px;} QPushButton:hover{background:#79bc31;}')
+                else:
+                    active=self.eligible(task,'pause');button.setText('Ⅱ  暂停' if active else '↓  继续')
+                    button.setEnabled(self.eligible(task,'pause' if active else 'resume'))
+                    button.clicked.connect(lambda checked=False,key=task_id,kind='pause' if active else 'resume':self.apply_batch(kind,[key],0))
+                    button.setStyleSheet('QPushButton{background:#414a56;color:#dce7f1;border:0;padding:10px;} QPushButton:hover{background:#556474;}')
             self.table.clearSelection();self.table.setCurrentCell(-1,-1)
             if selected_id in self.visible:self.table.selectRow(ids.index(selected_id))
         self.table.horizontalScrollBar().setValue(scroll);self.table.verticalScrollBar().setValue(vertical)
@@ -204,6 +282,11 @@ class TaskDialog(QDialog):
         self.total_speed.setText('整体下载速度：'+speed_text(rate))
         self.update_actions()
         if ids!=old_ids or not old_ids:self.schedule_fit()
+
+    def open_result(self,task_id):
+        row=self.visible.get(task_id)
+        path=(row or {}).get('result',{}).get('path')
+        if path:QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).resolve())))
 
     def filter_changed(self):
         self.checked_ids.clear();self.render(reset_scroll=True)

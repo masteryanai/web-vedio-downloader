@@ -37,13 +37,18 @@ class CloseChoice(QDialog):
 
 class SettingsDialog(QDialog):
     def __init__(self,desktop):
-        super().__init__(desktop.window);self.desktop=desktop;self.setWindowTitle('设置');self.resize(550,680)
-        cfg=preferences.load();outer=QVBoxLayout(self);scroll=QScrollArea();scroll.setWidgetResizable(True);content=QWidget();scroll.setWidget(content);outer.addWidget(scroll);layout=QVBoxLayout(content)
+        super().__init__(desktop.window);self.desktop=desktop;self.setWindowTitle('设置');self.resize(850,640)
+        from steam_dialogs import DialogPages
+        cfg=preferences.load();outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,16)
+        self.sections=DialogPages('应用设置');outer.addWidget(self.sections)
+        layout=self.sections.page('下载')
         layout.addWidget(QLabel('同时运行的下载任务数（1～10）'))
         self.count=QSpinBox();self.count.setRange(1,10);self.count.setValue(desktop.queue.limit);layout.addWidget(self.count)
         self.limit_enabled=QCheckBox('限制媒体下载总速度（所有任务共享）');self.limit_enabled.setChecked(cfg['download_limit_mib']>0);layout.addWidget(self.limit_enabled)
         self.speed_limit=QDoubleSpinBox();self.speed_limit.setDecimals(2);self.speed_limit.setRange(.01,102400);self.speed_limit.setSingleStep(.5);self.speed_limit.setSuffix(' MiB/s');self.speed_limit.setValue(cfg['download_limit_mib'] or 5);self.speed_limit.setEnabled(self.limit_enabled.isChecked());self.limit_enabled.toggled.connect(self.speed_limit.setEnabled);layout.addWidget(self.speed_limit)
         rate_note=QLabel('默认不限速。仅限制视频、图片和配乐；保存后立即生效，软件更新不受限。');rate_note.setWordWrap(True);layout.addWidget(rate_note)
+        layout.addStretch()
+        layout=self.sections.page('界面与悬浮框')
         layout.addWidget(QLabel('点击主窗口关闭按钮时'))
         self.close_action=QComboBox()
         for text,key in (('每次询问','ask'),('隐藏到托盘','hide'),('退出程序','exit')):self.close_action.addItem(text,key)
@@ -52,6 +57,8 @@ class SettingsDialog(QDialog):
         self.auto_hide=QCheckBox('靠近左右边缘时自动收起');self.auto_hide.setChecked(cfg['float_auto_hide']);layout.addWidget(self.auto_hide)
         row=QHBoxLayout();row.addWidget(QLabel('悬浮框不透明度'))
         self.opacity=QSpinBox();self.opacity.setRange(20,100);self.opacity.setSuffix('%');self.opacity.setValue(cfg['float_opacity']);row.addWidget(self.opacity);layout.addLayout(row)
+        layout.addStretch()
+        layout=self.sections.page('更新与存储')
         self.auto_check=QCheckBox('自动检查更新（只提示，不自动下载安装）');self.auto_check.setChecked(cfg['auto_check_updates']);layout.addWidget(self.auto_check)
         row=QHBoxLayout();row.addWidget(QLabel('检查间隔（小时）'))
         self.check_interval=QSpinBox();self.check_interval.setRange(1,168);self.check_interval.setValue(cfg['update_interval_hours']);row.addWidget(self.check_interval);layout.addLayout(row)
@@ -61,8 +68,11 @@ class SettingsDialog(QDialog):
         cache_button=QPushButton('更新缓存：目录与清理');cache_button.clicked.connect(self.show_cache);layout.addWidget(cache_button)
         if hasattr(desktop.window,'workspace'):
             library_button=QPushButton('影片存储库与外部播放器');library_button.clicked.connect(desktop.window.workspace.storage);layout.addWidget(library_button)
-        self.error=QLabel();self.error.setWordWrap(True);layout.addWidget(self.error)
-        save=QPushButton('保存');save.clicked.connect(self.apply);layout.addWidget(save)
+        layout.addStretch()
+        self.error=QLabel();self.error.setWordWrap(True);outer.addWidget(self.error)
+        footer=QHBoxLayout();footer.setContentsMargins(20,0,20,0);footer.addStretch()
+        cancel=QPushButton('取消');cancel.clicked.connect(self.reject);footer.addWidget(cancel)
+        save=QPushButton('保存');save.setObjectName('primary');save.clicked.connect(self.apply);footer.addWidget(save);outer.addLayout(footer)
         desktop.preferences_changed.connect(self.sync)
     def show_cache(self):
         from update_cache_ui import CacheDialog
