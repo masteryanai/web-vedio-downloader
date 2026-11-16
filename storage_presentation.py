@@ -5,7 +5,7 @@ import shutil
 import stat
 from PySide6.QtCore import Qt,QRectF
 from PySide6.QtGui import QColor,QPainter
-from PySide6.QtWidgets import QFrame,QHBoxLayout,QVBoxLayout,QLabel,QWidget
+from PySide6.QtWidgets import QFrame,QHBoxLayout,QVBoxLayout,QLabel,QWidget,QSizePolicy
 
 
 def byte_text(value):
@@ -61,11 +61,11 @@ class StorageBar(QWidget):
 class StorageRow(QFrame):
     def __init__(self,work,pixmap,episodes):
         super().__init__();self.setObjectName('storageRow')
-        box=QHBoxLayout(self);box.setContentsMargins(12,10,16,10);box.setSpacing(16)
-        self.cover=QLabel();self.cover.setFixedSize(106,68);self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover.setPixmap(pixmap.scaled(106,68,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation));box.addWidget(self.cover)
-        info=QVBoxLayout();info.setSpacing(5)
-        title=QLabel(work['title']+' '+work.get('season',''));title.setObjectName('storageTitle');title.setWordWrap(True);title.setMaximumHeight(44);info.addWidget(title)
+        box=QHBoxLayout(self);box.setContentsMargins(10,6,12,6);box.setSpacing(14)
+        self.cover=QLabel();self.cover.setFixedSize(98,54);self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cover.setPixmap(pixmap.scaled(98,54,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation));box.addWidget(self.cover)
+        info=QVBoxLayout();info.setSpacing(3)
+        title=QLabel(work['title']+' '+work.get('season',''));title.setObjectName('storageTitle');title.setWordWrap(False);title.setMinimumWidth(0);title.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred);title.setToolTip(title.text());info.addWidget(title)
         sites=' / '.join(dict.fromkeys(v.get('site','未知来源') for v in work.get('sources',[]))) or '外部导入'
         source=QLabel(sites+f' · {episodes} 个选集');source.setObjectName('muted');source.setWordWrap(True);info.addWidget(source)
         self.file_label=QLabel('读取已登记文件…');self.file_label.setObjectName('muted');info.addWidget(self.file_label)

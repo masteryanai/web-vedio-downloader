@@ -125,16 +125,16 @@ class StorageDialog(QDialog):
         from storage_presentation import StorageBar
         dark_titlebar(self);self._generation=0;self._cancel=threading.Event();self._rows={};self._capacity_lock=threading.Lock();self._capacity_pending=None;self._capacity_running=False;self._capacity_closed=False
         self.capacity_ready.connect(self.show_capacity)
-        self.resize(940,690)
+        self.resize(900,720)
         outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,0)
         self.sections=DialogPages('应用设置');outer.addWidget(self.sections)
-        layout=self.sections.page('存储空间')
+        layout=self.sections.page('存储空间');layout.setSpacing(10)
         self.disks=QComboBox();self.disks.setObjectName('diskSelector');layout.addWidget(self.disks)
         self.path_label=QLabel();self.path_label.setObjectName('muted');self.path_label.setWordWrap(True);layout.addWidget(self.path_label)
         self.capacity=QLabel();layout.addWidget(self.capacity)
         self.usage=StorageBar();layout.addWidget(self.usage)
         self.legend=QLabel();self.legend.setObjectName('muted');self.legend.setWordWrap(True);layout.addWidget(self.legend)
-        semantics=QLabel('本库仅统计此目录内已登记文件的逻辑大小，外部引用不计入；与实际磁盘分配可能不同。');semantics.setObjectName('storageSemantics');semantics.setWordWrap(True);layout.addWidget(semantics)
+        semantics=QLabel('仅统计已登记文件 · 不扫描其他文件');semantics.setObjectName('storageSemantics');layout.addWidget(semantics)
         heading=QHBoxLayout();self.entries_heading=QLabel();self.entries_heading.setObjectName('sectionTitle');heading.addWidget(self.entries_heading)
         rule=QFrame();rule.setFrameShape(QFrame.Shape.HLine);rule.setObjectName('storageRule');heading.addWidget(rule,1);layout.addLayout(heading)
         self.entries=QListWidget();self.entries.setObjectName('storageEntries');self.entries.setSpacing(2);self.entries.setMinimumHeight(220);self.entries.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);layout.addWidget(self.entries,1)
@@ -175,7 +175,7 @@ class StorageDialog(QDialog):
             episodes=[e for e in data['episodes'] if e['work_id']==work['id']]
             sites=' / '.join(dict.fromkeys(v.get('site','未知来源') for v in work.get('sources',[]))) or '外部导入'
             item=QListWidgetItem(work['title']+' '+work.get('season','')+' '+sites)
-            item.setSizeHint(QSize(0,106));self.entries.addItem(item)
+            item.setSizeHint(QSize(0,84));self.entries.addItem(item)
             row=StorageRow(work,thumbnail({**work,'banner':work.get('banner') or work.get('cover')},106,68,banner=True),len(episodes));self.entries.setItemWidget(item,row);self._rows[work['id']]=row
         if not works:self.entries.addItem('此存储库暂无季条目。新增下载或导入后将在这里显示。')
         with self._capacity_lock:
