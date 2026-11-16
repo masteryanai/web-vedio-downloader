@@ -55,13 +55,29 @@ def gui_check():
             cell=dialog.table.cellWidget(0,1);bar=cell.findChild(QProgressBar)
             assert abs(bar.y()-(cell.height()-bar.y()-bar.height()))<=1
             assert bar.alignment()==Qt.AlignmentFlag.AlignCenter
-            assert not dialog.table.wordWrap() and dialog.table.rowHeight(0)==32
+            assert not dialog.table.wordWrap() and dialog.table.rowHeight(0)>=96
             option=QStyleOptionViewItem()
             dialog.table.itemDelegateForColumn(0).initStyleOption(option,dialog.table.model().index(0,0))
             assert option.textElideMode==Qt.TextElideMode.ElideRight
             assert '\n' not in dialog.table.item(0,0).text()
-            assert dialog.table.item(0,0).toolTip()==created[0]['title']
-            assert dialog.table.horizontalScrollBar().maximum()>0
+            assert created[0]['title'] in dialog.table.item(0,0).toolTip()
+            assert created[0]['output'] in dialog.table.item(0,0).toolTip()
+            assert dialog.table.horizontalScrollBar().maximum()==0
+            from PySide6.QtTest import QTest
+            from PySide6.QtCore import QPoint
+            checkbox=QPoint(20,dialog.table.visualItemRect(dialog.table.item(0,0)).center().y())
+            QTest.mouseClick(dialog.table.viewport(),Qt.MouseButton.LeftButton,pos=checkbox)
+            assert created[0]['id'] in dialog.checked_ids
+            QTest.mouseClick(dialog.table.viewport(),Qt.MouseButton.LeftButton,pos=checkbox)
+            assert created[0]['id'] not in dialog.checked_ids
+            # A row action captures its own identity even when another row is selected.
+            from PySide6.QtWidgets import QPushButton
+            dialog.table.selectRow(1)
+            with patch.object(dialog,'resume_task',return_value=True) as resume_row:
+                dialog.table.cellWidget(0,6).findChild(QPushButton).click()
+                assert resume_row.call_args.args==(created[0]['id'],)
+            cover=root/'cover.png';image=QImage(128,72,QImage.Format.Format_RGB32);image.fill(QColor('#326b83'));image.save(str(cover))
+            dialog.cover_provider=lambda task:str(cover)
             # Real running status uses a short label but retains its full source message.
             running_id=created[3]['id'];raw='AGE：连接视频源，确认已下载进度。'
             queue.active[running_id]=None;queue.snapshots[running_id]={'stage':raw}
@@ -73,7 +89,7 @@ def gui_check():
             for points in (9,14):
                 font=QFont(default_font);font.setPointSize(points);dialog.table.setFont(font);settle()
                 metrics=QFontMetrics(dialog.table.font())
-                assert all(metrics.horizontalAdvance(text)+12<=dialog.table.columnWidth(3) for text in STATUS_TEXTS)
+                assert dialog.table.horizontalScrollBar().maximum()==0
             dialog.table.setFont(default_font);settle()
             baseline=dialog.table.columnWidth(3)
             unknown='未知超长状态'*80;queue.snapshots[running_id]={'stage':unknown};dialog.refresh();settle()
@@ -87,8 +103,8 @@ def gui_check():
             painter=QPainter(canvas);delegate.paint(painter,option,dialog.table.model().index(3,3));painter.end()
             assert all(canvas.pixelColor(x,y)==sentinel for x in range(90,240) for y in range(32)), 'status paint escaped into the path cell'
             dialog.table.setColumnWidth(3,90);dialog.refresh();settle()
-            assert dialog.table.columnWidth(3)==90
-            dialog.resize(1200,520);settle();assert dialog.table.columnWidth(3)==90
+            assert dialog.table.isColumnHidden(3)
+            dialog.resize(1200,520);settle();assert dialog.table.horizontalScrollBar().maximum()==0
             dialog.status_default_width=None;dialog.fit_columns();dialog.resize(1100,520);settle()
             queue.snapshots[running_id]={'stage':raw};dialog.refresh();settle()
             screenshot=os.environ.get('TASK_VIEW_SCREENSHOT')
