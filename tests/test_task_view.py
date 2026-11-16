@@ -124,6 +124,11 @@ def gui_check():
             assert all(not dialog.buttons[key].isHidden() for key in ('pause','resume','cancel'))
             assert created[3]['id'] in dialog.visible # 100% while verifying is still ongoing.
             select_group(2);assert dialog.table.rowCount()==2
+            # A task result shortcut reveals its folder; playback confirmation
+            # and configured players remain in the season's playback flow.
+            with patch('task_view.QDesktopServices.openUrl',return_value=True) as revealed:
+                dialog.open_result(created[4]['id'])
+                assert Path(revealed.call_args.args[0].toLocalFile()).resolve()==outputs[0].parent.resolve()
             assert not dialog.buttons['clear'].isHidden() and not dialog.buttons['clear'].isEnabled()
             dialog.table.selectRow(0)
             with patch.object(DeleteDialog,'exec') as popup:
@@ -217,3 +222,4 @@ def gui_check():
 
 
 if __name__=='__main__' and '--gui-check' in sys.argv:gui_check()
+
