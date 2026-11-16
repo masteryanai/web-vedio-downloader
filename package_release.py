@@ -20,7 +20,7 @@ def package(root=None):
     tag='v'+APP_VERSION;release=root/'release'/tag;release.mkdir(parents=True,exist_ok=True)
     for stale in release.glob(f'WebVideoDownloader-*-to-{tag}-delta.zip'):stale.unlink()
     policy=json.loads((root/'release_policy.json').read_text(encoding='utf-8'))
-    target=tree_inventory(source,APP_VERSION);target['data_schema']=policy['data_schema']
+    target=tree_inventory(source,APP_VERSION);target['data_schema']=policy['data_schema'];target['startup_confirmation']=1
     (source/'_internal'/'installation.json').write_bytes(canonical(target))
     if (root/'recovery-root.cmd').exists():
         (source/'修复与回退.cmd').write_bytes((root/'recovery-root.cmd').read_bytes())
@@ -32,7 +32,7 @@ def package(root=None):
     target_file=release/f'inventory-{tag}.json';target_file.write_bytes(canonical(target))
     notes=(release/'notes.md').read_text(encoding='utf-8') if (release/'notes.md').exists() else f'# Web Video Downloader {tag}'
     manifest={'application':'WebVideoDownloader','version':APP_VERSION,'schema':2,**descriptor(archive,tag),
-        'inventory':descriptor(target_file,tag),'data_schema':policy['data_schema'],'notes':notes,
+        'inventory':descriptor(target_file,tag),'data_schema':policy['data_schema'],'startup_confirmation':1,'notes':notes,
         'published_at':datetime.now(timezone.utc).isoformat(timespec='seconds'),'force_full':policy['force_full'],'force_full_reason':policy['force_full_reason'],'full_only_from':{},'deltas':[]}
     entries=[{'version':APP_VERSION,'package':descriptor(archive,tag),'inventory':descriptor(target_file,tag),
         'published_at':manifest['published_at'],'notes':notes,'rollback_allowed':True,'data_schema':policy['data_schema']}]
@@ -44,7 +44,7 @@ def package(root=None):
     for folder in sorted(previous,key=lambda p:version(p.name),reverse=True)[:3]:
         old=json.loads((folder/'update.json').read_text(encoding='utf-8'));oldzip=folder/old['asset']
         if not oldzip.exists():raise RuntimeError('缺少历史完整包：'+str(oldzip))
-        base=zip_inventory(oldzip,old['version']);base['data_schema']=old.get('data_schema',1)
+        base=zip_inventory(oldzip,old['version']);base['data_schema']=old.get('data_schema',1);base['startup_confirmation']=old.get('startup_confirmation',0)
         basefile=release/f'inventory-v{base["version"]}.json';basefile.write_bytes(canonical(base))
         oldnotes=(folder/'notes.md').read_text(encoding='utf-8') if (folder/'notes.md').exists() else old.get('notes',f'历史版本 {folder.name}')
         allowed=base['data_schema']==target['data_schema'] and base['version'] not in policy['revoked_versions']

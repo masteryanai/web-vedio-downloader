@@ -18,7 +18,7 @@ def ensure_maintenance():
             data=json.loads(marker.read_text(encoding='utf-8'))
             if data.get('application')!='WebVideoDownloader' or version(data['version'])>version(APP_VERSION):return
         folder.mkdir(exist_ok=True)
-        for name in ('recovery.ps1','update_install.ps1'):
+        for name in ('recovery.ps1','update_install.ps1','update_window.ps1'):
             source=resource_path(name)
             if source.is_file():shutil.copy2(source,folder/name)
         marker.write_text(json.dumps({'application':'WebVideoDownloader','version':APP_VERSION}),encoding='utf-8')

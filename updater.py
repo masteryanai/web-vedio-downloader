@@ -183,11 +183,8 @@ def _prepare_update(info, cancel, progress):
 
 
 def launch_update(prepared):
-    from update_pending import refresh_pid
-    refresh_pid(prepared)
-    # Process-scoped script policy; no persistent Windows policy is changed.
-    subprocess.Popen(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
-        '-File',prepared['helper'],'-Plan',prepared['plan']],creationflags=subprocess.CREATE_NO_WINDOW)
+    from install_handoff import launch
+    return launch(prepared)
 
 
 def show_update_dialog(parent):

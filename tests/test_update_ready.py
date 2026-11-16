@@ -48,13 +48,19 @@ def check():
             scheduler.manual();app.processEvents();check_again.assert_not_called()
         assert dialog.prepared and dialog.install.text()=='更新并重启应用';prepare.assert_called_once()
         window.queue.active={'work':1};dialog.refresh();assert not dialog.install.isEnabled();dialog.download();launch.assert_not_called()
-        window.queue.active={};dialog.refresh();dialog.install.click();launch.assert_called_once();window.request_exit.assert_called_once()
+        window.queue.active={};dialog.refresh();dialog.install.click();settle(lambda:dialog.thread is None and dialog.launching);launch.assert_called_once();window.request_exit.assert_called_once()
     dialog.close();window.request_exit.reset_mock()
     immediate=UpdateCenter(window);immediate.receive({'available':True,'version':'99.0.1'});immediate.show()
     with patch('updater.prepare_update',return_value={'plan':'fixture','helper':'fixture'}),patch.object(immediate,'confirm_restart',return_value=True) as consent,patch('updater.launch_update') as launch:
         immediate.download();settle(lambda:immediate.thread is None and immediate.launching)
         consent.assert_called_once();launch.assert_called_once();window.request_exit.assert_called_once()
-    immediate.close();scheduler.shutdown();window.close();app.processEvents()
+    immediate.close();window.request_exit.reset_mock()
+    failed=UpdateCenter(window);failed.receive({'available':True,'version':'99.0.2'});failed.prepared={'plan':'fixture'};failed.show()
+    with patch('updater.launch_update',side_effect=RuntimeError('fixture handoff failed')):
+        failed.launch();settle(lambda:failed.thread is None)
+        window.request_exit.assert_not_called();assert not failed.launching and failed.install.isEnabled()
+        assert 'fixture handoff failed' in failed.label.text()
+    failed.close();scheduler.shutdown();window.close();app.processEvents()
 
 
 if __name__=='__main__' and '--check' in sys.argv:check()

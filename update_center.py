@@ -194,11 +194,15 @@ class UpdateCenter(QDialog):
         self.notes.render(self.info.get('notes',''));self.present_prepared()
         if data.get('error'):self.label.setText('上次安装未完成：'+data['error']);self.progress_detail.setText('更新文件已保留，可重试更新并重启或使用独立修复入口。')
     def launch(self):
-        if self.launching:return
+        if self.launching or self.busy():return
         if not can_install(self.parentWidget()):self.label.setText('更新包已准备好，请在当前任务结束后点击安装。');return
         import updater
-        try:updater.launch_update(self.prepared);self.launching=True;self.steps.setText('当前阶段：退出、安装并重启');self.label.setText('正在退出应用以安装更新…')
-        except Exception as error:self.failed(error);return
+        self.launching=True;self.handoff_ready=False;self.handoff_failed=False;self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self.steps.setText('当前阶段：打开独立更新窗口');self.label.setText('正在打开安装进度窗口，原程序暂不退出…')
+        self.start(lambda progress:updater.launch_update(self.prepared),self.handoff_received)
+    def handoff_received(self,result):self.handoff_ready=True
+    def exit_for_install(self):
+        self.label.setText('安装窗口已就绪，正在退出主程序…')
         parent=self.parentWidget()
         if parent and hasattr(parent,'request_exit'):parent.request_exit()
         else:
@@ -206,12 +210,15 @@ class UpdateCenter(QDialog):
             QApplication.instance().quit()
     def done_job(self):
         self.thread=None;self.job=None
+        if self.launching and getattr(self,'handoff_ready',False):self.exit_for_install();return
+        if getattr(self,'handoff_failed',False):self.refresh();return
         if self.closing:self.pending_info=None;self.close();return
         if self.pending_info is not None:
             info=self.pending_info;self.pending_info=None;self.receive(info);return
         if self.prepared and not self.cancel.is_set():self.present_prepared();self.offer_install()
         self.refresh()
     def failed(self,error):
+        if self.launching:self.launching=False;self.handoff_failed=True;self.setWindowModality(Qt.WindowModality.NonModal)
         from update_package import FullConfirmation
         if isinstance(error,FullConfirmation):
             self.need_confirm=True;self.selection={'mode':'full','size':(self.info or {}).get('manifest',{}).get('size',0),'reason':str(error)};self.prepared=None
@@ -225,5 +232,6 @@ class UpdateCenter(QDialog):
         self.close()
     def reject(self):self.close()
     def closeEvent(self,event):
+        if self.launching and self.busy():self.label.setText('正在交接独立更新窗口，请稍候…');event.ignore();return
         if self.busy():self.closing=True;self.cancel.set();self.label.setText('正在停止更新请求…');event.ignore()
         else:event.accept()

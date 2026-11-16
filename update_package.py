@@ -153,11 +153,12 @@ def _prepare(info,cancel,progress):
         raise ValueError(message+'，请重新准备更新包。')
     if cancel.is_set():raise RuntimeError('已取消更新。')
     config={'schema':2,'install_dir':str(install),'payload_dir':str(payload),'version':info['version'],
-        'from_version':APP_VERSION,'pid':os.getpid(),'operation':info.get('operation','upgrade'),'data_dir':str(app_data_dir())}
+        'from_version':APP_VERSION,'pid':os.getpid(),'operation':info.get('operation','upgrade'),'data_dir':str(app_data_dir()),'ui_schema':1}
     for name in ('target','base'):
         file=stage/(name+'.json');file.write_bytes(canonical(plan[name]));config[name+'_inventory']=str(file);config[name+'_sha256']=digest(file)
     (stage/'plan.json').write_bytes(canonical(config))
     shutil.copy2(resource_path('update_install.ps1'),stage/'update_install.ps1')
+    shutil.copy2(resource_path('update_window.ps1'),stage/'update_window.ps1')
     prepared={'plan':str(stage/'plan.json'),'helper':str(stage/'update_install.ps1')}
     # Persist protection before releasing the cache operation lock or notifying Qt.
     from update_pending import remember

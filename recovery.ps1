@@ -133,6 +133,17 @@ try{
     $planFile=Join-Path $stage 'plan.json';$plan | ConvertTo-Json | Set-Content -LiteralPath $planFile -Encoding UTF8
     if(-not $NoLaunch -and (Read-Host ('Install '+$target.version+'? Type YES to confirm')) -cne 'YES'){return}
     $helper=Join-Path $PSScriptRoot 'update_install.ps1'
+    if(-not $NoLaunch){
+        $windowSource=Join-Path $PSScriptRoot 'update_window.ps1'
+        if(-not (Test-Path -LiteralPath $windowSource)){throw 'Independent update window is missing.'}
+        Copy-Item -LiteralPath $helper -Destination (Join-Path $stage 'update_install.ps1')
+        Copy-Item -LiteralPath $windowSource -Destination (Join-Path $stage 'update_window.ps1')
+        $plan.ui_schema=1;$plan.run_token=[Guid]::NewGuid().ToString('N');$plan | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $planFile -Encoding UTF8
+        $cacheGuard.Dispose();$cacheGuard=$null
+        & powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File (Join-Path $stage 'update_window.ps1') -Plan $planFile
+        if($LASTEXITCODE -ne 0){throw 'Update not completed. See the retained install log.'}
+        return
+    }
     $arguments=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$helper,'-Plan',$planFile)
     if($NoLaunch){$arguments+='-NoLaunch'}
     $cacheGuard.Dispose();$cacheGuard=$null

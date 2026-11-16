@@ -29,6 +29,9 @@ def validate(prepared,info):
         inv=validate_inventory(json.loads(path.read_text(encoding='utf-8-sig')))
         if inv['version']!=config['from_version' if name=='base' else 'version']:raise ValueError('待安装文件清单版本不符。')
     if digest(helper)!=digest(resource_path('update_install.ps1')):raise ValueError('待安装助手已变化。')
+    if config.get('ui_schema')==1:
+        window=plan.parent/'update_window.ps1'
+        if window.is_symlink() or digest(window)!=digest(resource_path('update_window.ps1')):raise ValueError('独立更新窗口校验失败。')
     return config
 
 

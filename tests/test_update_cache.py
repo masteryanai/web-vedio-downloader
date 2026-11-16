@@ -42,6 +42,9 @@ class CacheTests(unittest.TestCase):
         result=cache.cleanup(now=now,limit=sum(p.stat().st_size for p in b.iterdir())+10);self.assertFalse(old.exists());self.assertFalse(a.exists());self.assertTrue(b.exists());self.assertGreaterEqual(result['freed'],200)
     def test_manual_cleanup_protects_prepared_stage_and_shared_package(self):
         package=self.package();stage=cache.new_stage(self.root);cache.mark(stage,'stage',archive=str(package/'package.zip'))
+        for name in ('update_window.ps1','progress.json','window-ready.json','startup-ack.json','handoff-abort.json','install.log','window-error.log','progress.json.'+'a'*32+'.tmp'):
+            (stage/name).write_text('fixture')
+        self.assertTrue(cache.managed(stage))
         cache.write_json(cache.state_dir()/'prepared.json',{'prepared':{'plan':str(stage/'plan.json')}})
         with self.assertRaisesRegex(ValueError,'待安装'):cache.change_location(str(self.base/'new'))
         result=cache.cleanup(manual=True);self.assertEqual(result['freed'],0);self.assertTrue(package.exists());self.assertTrue(stage.exists())

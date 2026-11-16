@@ -822,6 +822,15 @@ def gui(args: argparse.Namespace) -> int:
         window.url_input.setPlainText(args.url)
     window.refresh_buttons()
     window.show()
+    if getattr(args,'update_plan',None):
+        from install_handoff import acknowledge
+        def confirm_startup():
+            try:
+                if acknowledge(window,args.update_plan,args.update_token):startup_confirmation.stop()
+            except (OSError,ValueError,KeyError,TypeError) as error:
+                diagnostics.event('update.startup.ack.failed',str(error));startup_confirmation.stop()
+        startup_confirmation=QTimer(window);startup_confirmation.setInterval(100);startup_confirmation.timeout.connect(confirm_startup);startup_confirmation.start()
+        QTimer.singleShot(85000,startup_confirmation.stop)
     if args.smoke_ui:
         def capture():
             if args.screenshot:
@@ -907,6 +916,8 @@ def main() -> int:
     parser.add_argument("--smoke-ui", action="store_true", help="Open and close an offscreen window")
     parser.add_argument("--smoke-inspect",action="store_true",help=argparse.SUPPRESS)
     parser.add_argument("--screenshot", help="Save the offscreen window screenshot")
+    parser.add_argument('--update-plan',help=argparse.SUPPRESS)
+    parser.add_argument('--update-token',help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.inspect or args.download:
         from portable_data import initialize

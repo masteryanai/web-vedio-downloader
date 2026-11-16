@@ -132,9 +132,10 @@ def managed(path,legacy=False):
     meta=read_json(path/ENTRY)
     if belongs(meta):
         names={p.name for p in path.iterdir()}
+        names={name for name in names if not re.fullmatch(r'(?:progress|window-ready|startup-ack|handoff-abort|result|plan)\.json\.(?:[0-9a-f]{32}\.)?tmp|plan\.tmp',name)}
         if meta.get('kind')=='package':return names<= {'package.zip','transfer.lock','writer.lock',ENTRY}
         if meta.get('kind')=='stage':
-            if not names<= {'payload','base.json','target.json','target-download.json','plan.json','result.json','update_install.ps1','update_helper.ps1',ENTRY}:return False
+            if not names<= {'payload','base.json','target.json','target-download.json','plan.json','result.json','update_install.ps1','update_helper.ps1','update_window.ps1','progress.json','window-ready.json','startup-ack.json','handoff-abort.json','install.log','window-error.log',ENTRY}:return False
             inventory=read_json(path/'target.json')
             if inventory and (path/'payload').exists():
                 from update_protocol import validate_inventory
@@ -154,7 +155,7 @@ def managed(path,legacy=False):
     if path.name.startswith('release-'):
         return names<= {'package.zip','plan.json','result.json','update_helper.ps1'} and Path(plan.get('archive','')).resolve()==(path/'package.zip').resolve()
     if path.name.startswith(('install-','recovery-')):
-        return names<= {'payload','base.json','target.json','target-download.json','plan.json','result.json','update_install.ps1',ENTRY} and Path(plan.get('payload_dir','')).resolve()==(path/'payload').resolve()
+        return names<= {'payload','base.json','target.json','target-download.json','plan.json','result.json','update_install.ps1','update_window.ps1','progress.json','window-ready.json','startup-ack.json','handoff-abort.json','install.log','window-error.log',ENTRY} and Path(plan.get('payload_dir','')).resolve()==(path/'payload').resolve()
     return False
 
 def references():
