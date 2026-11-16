@@ -20,3 +20,15 @@ class DialogPages(QWidget):
         scroll.setWidget(content);self.pages.addWidget(scroll)
         if self.navigation.currentRow()<0:self.navigation.setCurrentRow(0)
         return layout
+
+
+def dark_titlebar(dialog):
+    """Use Windows' dark native frame, preserving drag, modal and Esc behavior."""
+    import sys
+    if sys.platform!='win32':return
+    import ctypes
+    try:
+        value=ctypes.c_int(1);handle=int(dialog.winId())
+        result=ctypes.windll.dwmapi.DwmSetWindowAttribute(ctypes.c_void_p(handle),20,ctypes.byref(value),ctypes.sizeof(value))
+        if result:ctypes.windll.dwmapi.DwmSetWindowAttribute(ctypes.c_void_p(handle),19,ctypes.byref(value),ctypes.sizeof(value))
+    except (AttributeError,OSError):pass
