@@ -59,7 +59,7 @@ class Jobs(QObject):
 
 
 class Trend(QWidget):
-    def __init__(self,parent=None):super().__init__(parent);self.values=deque(maxlen=120);self.setMinimumHeight(90)
+    def __init__(self,parent=None):super().__init__(parent);self.values=deque(maxlen=120);self.setMinimumHeight(90);self.setAccessibleName('最近120秒媒体下载速度趋势')
     def add(self,value):self.values.append(max(0,value));self.update()
     def paintEvent(self,event):
         painter=QPainter(self);painter.setRenderHint(QPainter.RenderHint.Antialiasing);background=QLinearGradient(0,0,0,self.height());background.setColorAt(0,QColor('#223c55'));background.setColorAt(1,QColor('#18232e'));painter.fillRect(self.rect(),background)
@@ -437,7 +437,7 @@ class Workspace(QObject):
         window.download_button.setText('加入库并下载');window.path_button.hide();window.output_path.hide()
         self.add_dialog.finished.connect(self.add_closed)
         shell=QWidget(objectName='steamShell');outer=QVBoxLayout(shell);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
-        from steam_widgets import Chrome,EdgeResize,CoverDelegate
+        from steam_widgets import Chrome,EdgeResize,CoverDelegate,control_icon
         window.setWindowFlags(window.windowFlags()|Qt.WindowType.FramelessWindowHint)
         self.chrome=Chrome(window);outer.addWidget(self.chrome);self.edge_resize=EdgeResize(window)
         shell.setStyleSheet("""
@@ -460,12 +460,13 @@ class Workspace(QObject):
             QTableCornerButton::section {background:#303640;}
             QPushButton#steamNav {border:0;background:transparent;font-size:19px;padding:0 8px;color:#d7d8da;}
             QPushButton#steamNavActive {border:0;border-bottom:2px solid #1a9fff;background:transparent;font-size:19px;padding:0 5px;color:#1a9fff;}
+            QPushButton#steamNav:focus,QPushButton#steamNavActive:focus,QPushButton#windowControl:focus,QPushButton#chromeMenu:focus {background:#354554;}
             QLabel#shelfHeading {color:#d5d8dd;font-size:15px;}
             QPushButton#playAction {background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #75b022,stop:1 #219e45);border:0;color:white;font-size:20px;padding:8px 30px;}
             QFrame#actionStrip {background:#252c35;border-bottom:1px solid #444c58;}
         """)
         top=QHBoxLayout();top.setContentsMargins(12,1,18,20);top.setSpacing(14)
-        previous=QPushButton('←');previous.setObjectName('steamNav');previous.clicked.connect(self.home);top.addWidget(previous)
+        previous=QPushButton();previous.setIcon(control_icon('back'));previous.setAccessibleName('返回影片库');previous.setToolTip('返回影片库');previous.setObjectName('steamNav');previous.clicked.connect(self.home);top.addWidget(previous)
         library=QPushButton('影片库');library.setObjectName('steamNavActive');library.clicked.connect(self.home);self.library_nav=library;top.addWidget(library)
         window.task_button.setText('下载');window.task_button.setObjectName('steamNav');self.tasks_nav=window.task_button;top.addWidget(window.task_button)
         tools=QPushButton('管理 ▾');tools.setObjectName('steamNav');menu=QMenu(tools)

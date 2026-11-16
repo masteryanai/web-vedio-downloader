@@ -1,20 +1,32 @@
 """Steam-like window chrome and cover rendering, independent of catalogue logic."""
 from PySide6.QtCore import Qt, QObject, QEvent, QSize
-from PySide6.QtGui import QColor, QPainter, QLinearGradient, QFont, QFontMetrics
+from PySide6.QtGui import QColor, QPainter, QLinearGradient, QFont, QFontMetrics, QIcon, QPixmap, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QStyledItemDelegate, QStyle, QApplication, QMenu
+
+def control_icon(kind):
+    """Draw monochrome window controls at device-independent size."""
+    pixmap=QPixmap(32,32);pixmap.fill(Qt.GlobalColor.transparent);pixmap.setDevicePixelRatio(2)
+    painter=QPainter(pixmap);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor('#a8b0ba'),1.2))
+    if kind=='minimize':painter.drawLine(3,11,13,11)
+    elif kind=='maximize':painter.drawRect(3,3,9,9)
+    elif kind=='close':painter.drawLine(3,3,12,12);painter.drawLine(12,3,3,12)
+    elif kind=='back':painter.drawLine(13,8,3,8);painter.drawLine(3,8,7,4);painter.drawLine(3,8,7,12)
+    painter.end();return QIcon(pixmap)
+
 
 class Chrome(QFrame):
     def __init__(self, window):
         super().__init__(); self.window=window; self.setObjectName('windowChrome'); self.setFixedHeight(29)
         row=QHBoxLayout(self);row.setContentsMargins(12,0,0,0);row.setSpacing(15)
-        row.addWidget(QLabel('◉  WVD'))
+        logo=QLabel();logo.setPixmap(window.windowIcon().pixmap(14,14));row.addWidget(logo);row.addWidget(QLabel('WVD'))
         for title,actions in [('查看',[('影片库',lambda:window.workspace.home()),('下载任务',lambda:window.workspace.show_tasks()),('设置',window.show_settings)]),('帮助',[('已适配网站',window.show_supported),('日志与故障反馈',window.show_diagnostics)])]:
             button=QPushButton(title);button.setObjectName('chromeMenu');menu=QMenu(button)
             for text,callback in actions:menu.addAction(text,callback)
             button.setMenu(menu);row.addWidget(button)
         row.addStretch()
-        for label,tip,callback in [('—','最小化',window.showMinimized),('□','最大化 / 还原',self.toggle),('×','关闭',window.close)]:
-            b=QPushButton(label);b.setObjectName('windowControl');b.setToolTip(tip);b.setFixedSize(33,28);b.clicked.connect(callback);row.addWidget(b)
+        for kind,tip,callback in [('minimize','最小化',window.showMinimized),('maximize','最大化 / 还原',self.toggle),('close','关闭',window.close)]:
+            b=QPushButton();b.setIcon(control_icon(kind));b.setObjectName('windowControl');b.setAccessibleName(tip);b.setToolTip(tip);b.setFixedSize(33,28);b.clicked.connect(callback);row.addWidget(b)
     def toggle(self):
         self.window.showNormal() if self.window.isMaximized() else self.window.showMaximized()
     def mouseDoubleClickEvent(self,event):
