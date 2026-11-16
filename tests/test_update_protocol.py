@@ -29,7 +29,7 @@ class UpdateProtocol(unittest.TestCase):
         write(self.new,'WebVideoDownloader.exe',b'new');write(self.new,'_internal/runtime.dll',b'fixed');write(self.new,'_internal/added.dat',b'added')
         self.base=protocol.tree_inventory(self.install,'0.8.0');self.target=protocol.tree_inventory(self.new,'0.9.0')
         write(self.install,protocol.INSTALLATION,protocol.canonical(self.base));self.cancel=threading.Event()
-        self.env=patch.dict(os.environ,LOCALAPPDATA=str(self.root/'data'));self.env.start();self.current=patch('update_package.APP_VERSION','0.8.0');self.current.start();self.pending_version=patch('update_pending.APP_VERSION','0.8.0');self.pending_version.start()
+        self.env=patch.dict(os.environ,LOCALAPPDATA=str(self.root/'data'),WVD_DATA_DIR=str(self.root/'data'/'WebVideoDownloaderPrototype'));self.env.start();self.current=patch('update_package.APP_VERSION','0.8.0');self.current.start();self.pending_version=patch('update_pending.APP_VERSION','0.8.0');self.pending_version.start()
     def tearDown(self):
         self.pending_version.stop();self.current.stop();self.env.stop()
         for attempt in range(30):
@@ -119,6 +119,25 @@ class UpdateProtocol(unittest.TestCase):
         last=json.loads((data/'updates'/'last-install.json').read_text(encoding='utf-8-sig'))
         self.assertEqual(Path(last['stage']).parent,custom)
         self.assertTrue((custom/'.update-cache.json').exists())
+
+    @unittest.skipUnless(os.name=='nt','Windows portable recovery')
+    def test_recovery_default_uses_program_data_without_legacy_writes(self):
+        result,report=self.run_install();self.assertEqual(result.returncode,0,report)
+        old=self.root/'data'/'WebVideoDownloaderPrototype';portable=self.install/'data'
+        (portable/'updates').mkdir(parents=True);(portable/'.portable-data.json').write_text(json.dumps({'application':'WebVideoDownloader','legacy_done':True,'install_dir':str(self.install)}));shutil.copy2(old/'updates/backup.json',portable/'updates/backup.json')
+        before={p.relative_to(old).as_posix():protocol.digest(p) for p in old.rglob('*') if p.is_file()}
+        env=dict(os.environ);env.pop('WVD_DATA_DIR',None)
+        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'recovery.ps1'),'-InstallDir',str(self.install),'-Action','restore','-NoLaunch'],env=env,capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr);self.assertTrue((portable/'updates/last-install.json').exists())
+        after={p.relative_to(old).as_posix():protocol.digest(p) for p in old.rglob('*') if p.is_file()};self.assertEqual(before,after)
+
+    @unittest.skipUnless(os.name=='nt','Windows compatibility')
+    def test_incompatible_old_layout_backup_is_not_offered(self):
+        result,report=self.run_install();self.assertEqual(result.returncode,0,report)
+        self.assertIsNotNone(packages.backup_info(self.install))
+        current=json.loads((self.install/protocol.INSTALLATION).read_text(encoding='utf-8-sig'));current['data_schema']=2
+        (self.install/protocol.INSTALLATION).write_bytes(protocol.canonical(current))
+        self.assertIsNone(packages.backup_info(self.install))
 
     @unittest.skipUnless(os.name=='nt','Windows installer')
     def test_transaction_failure_restores_every_touched_file(self):

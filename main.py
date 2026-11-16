@@ -794,12 +794,16 @@ def gui(args: argparse.Namespace) -> int:
             QTimer.singleShot(0,QApplication.instance().quit)
 
     app = QApplication(sys.argv[:1])
+    app.setQuitOnLastWindowClosed(False)
     from single_instance import SingleInstance
-    instance=SingleInstance(app)
+    instance=None
     try:
+        instance=SingleInstance(app)
         if not instance.acquire():return 0
-    except RuntimeError as error:
+    except (RuntimeError,OSError,ValueError) as error:
         QMessageBox.warning(None,'无法启动下载器',str(error));return 1
+    from portable_ui import prepare_data
+    if not prepare_data():instance.close();return 1
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("WebVideoDownloader")
     app.setOrganizationName("LocalTools")
@@ -892,7 +896,7 @@ QToolTip { background:white; color:#17283b; border:1px solid #dce3ec; }
 def main() -> int:
     if len(sys.argv)==3 and sys.argv[1]=='--diagnostic-watchdog':
         diagnostics.watchdog(sys.argv[2]);return 0
-    parser = argparse.ArgumentParser(description="Windows video downloader prototype")
+    parser = argparse.ArgumentParser(description="Windows portable video downloader")
     operation = parser.add_mutually_exclusive_group()
     operation.add_argument("--inspect", help="Inspect a URL without opening the GUI")
     operation.add_argument("--download", help="Inspect and download a URL without opening the GUI")
@@ -905,6 +909,8 @@ def main() -> int:
     parser.add_argument("--screenshot", help="Save the offscreen window screenshot")
     args = parser.parse_args()
     if args.inspect or args.download:
+        from portable_data import initialize
+        initialize()
         return cli(args)
     return gui(args)
 
@@ -915,6 +921,9 @@ if __name__ == "__main__":
     except Exception:
         from runtime import app_data_dir
         folder = app_data_dir()
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / "startup-error.log").write_text(diagnostics.redact_export(traceback.format_exc()), encoding="utf-8")
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / 'startup-error.log').write_text(diagnostics.redact_export(traceback.format_exc()),encoding='utf-8')
+        except OSError:
+            if sys.stderr:sys.stderr.write('程序数据目录不可写，请将程序放到可写目录；没有使用 C 盘备用目录。\n')
         raise

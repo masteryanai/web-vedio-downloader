@@ -43,6 +43,7 @@ try {
     if(-not $payload.StartsWith($stage+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Payload is outside staging folder.'}
     $target=Inventory $config.target_inventory $config.target_sha256;$base=Inventory $config.base_inventory $config.base_sha256
     if($target.version -ne $config.version -or $base.version -ne $config.from_version){throw 'Version mismatch.'}
+    if($config.operation -eq 'rollback' -and $target.data_schema -ne $base.data_schema){throw 'Rollback data layout is incompatible; current data must remain portable.'}
     Verify $payload $target
     $deadline=(Get-Date).AddSeconds(90)
     while($config.pid -gt 0 -and (Get-Process -Id $config.pid -ErrorAction SilentlyContinue)){

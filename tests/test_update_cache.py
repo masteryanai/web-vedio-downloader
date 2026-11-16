@@ -16,7 +16,7 @@ import update_protocol as protocol
 class CacheTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.base=Path(self.temp.name);self.install=self.base/'app';self.install.mkdir();self.exe=self.install/'WebVideoDownloader.exe';self.exe.write_bytes(b'app')
-        self.patches=[patch.dict(os.environ,LOCALAPPDATA=str(self.base/'data')),patch('sys.frozen',True,create=True),patch('sys.executable',str(self.exe))]
+        self.patches=[patch.dict(os.environ,LOCALAPPDATA=str(self.base/'data'),WVD_DATA_DIR=str(self.base/'data'/'WebVideoDownloaderPrototype')),patch('sys.frozen',True,create=True),patch('sys.executable',str(self.exe))]
         for p in self.patches:p.start()
         self.root=cache.register(cache.location())
     def tearDown(self):

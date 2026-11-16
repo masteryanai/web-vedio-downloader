@@ -9,12 +9,12 @@ import unittest
 class DesktopUI(unittest.TestCase):
     def test_tray_settings_floating_and_exit_lifecycle(self):
         with tempfile.TemporaryDirectory() as folder:
-            result=subprocess.run([sys.executable,__file__,'--check'],env=dict(os.environ,LOCALAPPDATA=folder,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=30)
+            result=subprocess.run([sys.executable,__file__,'--check'],env=dict(os.environ,LOCALAPPDATA=folder,WVD_DATA_DIR=str(Path(folder)/'WebVideoDownloaderPrototype'),QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=30)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def run_mode(self,mode):
         with tempfile.TemporaryDirectory() as folder:
-            result=subprocess.run([sys.executable,__file__,mode],env=dict(os.environ,LOCALAPPDATA=folder,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=20)
+            result=subprocess.run([sys.executable,__file__,mode],env=dict(os.environ,LOCALAPPDATA=folder,WVD_DATA_DIR=str(Path(folder)/'WebVideoDownloaderPrototype'),QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=20)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
     def test_hidden_download_continues_and_exit_preserves_partial(self):self.run_mode('--download')
     def test_update_bypasses_remembered_hide(self):self.run_mode('--update')

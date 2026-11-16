@@ -16,7 +16,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class PendingUpdate(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.env=patch.dict(os.environ,LOCALAPPDATA=str(self.root/'data'));self.env.start()
+        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.env=patch.dict(os.environ,LOCALAPPDATA=str(self.root/'data'),WVD_DATA_DIR=str(self.root/'data'/'WebVideoDownloaderPrototype'));self.env.start()
         self.install=self.root/'app';self.install.mkdir();self.exe=self.install/'WebVideoDownloader.exe';self.exe.write_bytes(b'old')
         self.stage=app_data_dir()/'updates/install-fixture';self.payload=self.stage/'payload';self.payload.mkdir(parents=True)
         (self.payload/'WebVideoDownloader.exe').write_bytes(b'new')

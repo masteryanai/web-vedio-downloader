@@ -9,7 +9,7 @@ import unittest
 class UpdateCenterUI(unittest.TestCase):
     def test_polling_badge_markdown_busy_gate_and_shared_checks(self):
         with tempfile.TemporaryDirectory() as folder:
-            result=subprocess.run([sys.executable,__file__,'--check'],env=dict(os.environ,LOCALAPPDATA=folder,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=20)
+            result=subprocess.run([sys.executable,__file__,'--check'],env=dict(os.environ,LOCALAPPDATA=folder,WVD_DATA_DIR=str(Path(folder)/'WebVideoDownloaderPrototype'),QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=20)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
 

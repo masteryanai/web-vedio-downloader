@@ -56,6 +56,8 @@ class SettingsDialog(QDialog):
         row=QHBoxLayout();row.addWidget(QLabel('检查间隔（小时）'))
         self.check_interval=QSpinBox();self.check_interval.setRange(1,168);self.check_interval.setValue(cfg['update_interval_hours']);row.addWidget(self.check_interval);layout.addLayout(row)
         note=QLabel('悬浮框每 3 秒轮播总速度、总进度和各下载任务速度。\n降低并行上限不会中断正在运行的任务。');note.setWordWrap(True);layout.addWidget(note)
+        from runtime import app_data_dir
+        data_label=QLabel('便携数据目录：'+str(app_data_dir()));data_label.setWordWrap(True);layout.addWidget(data_label)
         cache_button=QPushButton('更新缓存：目录与清理');cache_button.clicked.connect(self.show_cache);layout.addWidget(cache_button)
         self.error=QLabel();self.error.setWordWrap(True);layout.addWidget(self.error)
         save=QPushButton('保存');save.clicked.connect(self.apply);layout.addWidget(save)

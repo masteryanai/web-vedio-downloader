@@ -19,7 +19,7 @@ from media_ytdlp import MediaYoutubeDL
 class BandwidthTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
-        self.env=patch.dict(os.environ,LOCALAPPDATA=self.temp.name);self.env.start()
+        self.env=patch.dict(os.environ,LOCALAPPDATA=self.temp.name,WVD_DATA_DIR=str(self.root/'WebVideoDownloaderPrototype'));self.env.start()
         preferences.update(download_limit_mib=0)
     def tearDown(self):
         preferences.update(download_limit_mib=0);self.env.stop();self.temp.cleanup()

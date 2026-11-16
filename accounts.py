@@ -46,9 +46,8 @@ _IMPORTED_STATUS = "会话已导入，权限待验证"
 
 
 def _storage_path() -> Path:
-    local = os.environ.get("LOCALAPPDATA")
-    base = Path(local) if local else Path.home() / "AppData" / "Local"
-    return base / "WebVideoDownloaderPrototype" / "sessions.dpapi"
+    from runtime import app_data_dir
+    return app_data_dir() / 'sessions.dpapi'
 
 
 def _dpapi(data: bytes, *, decrypt: bool = False) -> bytes:

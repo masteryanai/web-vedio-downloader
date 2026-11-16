@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 import time
-from runtime import app_data_dir
+from runtime import app_data_dir,legacy_data_dir
 from update_protocol import version
 import diagnostics
 
@@ -27,6 +27,8 @@ _local=threading.local()
 def installation():return Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent
 
 def state_dir():return app_data_dir()/'updates'
+
+def legacy_root(root):return root in (state_dir(),legacy_data_dir()/'updates')
 
 def read_json(path):
     try:
@@ -65,7 +67,7 @@ def validate_location(path):
     root=no_links(path);install=installation();data=app_data_dir().resolve()
     if not root.is_absolute() or root in (Path(root.anchor),Path.home(),data,install) or root in install.parents or root in data.parents:raise ValueError('不能使用磁盘根目录、程序根目录或用户数据目录作为缓存目录。')
     if root.is_relative_to(install) and root!=install/'update':raise ValueError('程序目录内只能使用专用的 update 文件夹。')
-    if root==data/'updates' or root.is_relative_to(data/'updates'):raise ValueError('不能覆盖原更新状态目录。')
+    if root==data/'updates' or root.is_relative_to(data/'updates') or root==legacy_data_dir()/'updates':raise ValueError('不能覆盖原更新状态目录。')
     return root
 
 def register(root):
@@ -84,10 +86,10 @@ def register(root):
 def roots():
     selected=location();result=[]
     values=read_json(state_dir()/'cache-locations.json').get('roots',[])
-    for value in [str(selected),*(values if isinstance(values,list) else []),str(state_dir())]:
+    for value in [str(selected),*(values if isinstance(values,list) else []),str(state_dir()),str(legacy_data_dir()/'updates')]:
         try:
             root=no_links(value)
-            if root==state_dir() or owner(root):
+            if legacy_root(root) or owner(root):
                 if root not in result:result.append(root)
         except (OSError,ValueError,TypeError):pass
     return result
@@ -183,11 +185,11 @@ def entries():
                 continue
             try:
                 files,_=tree(path);size=sum(p.stat().st_size for p in files)
-                known=managed(path,root==state_dir())
+                known=managed(path,legacy_root(root))
                 used=read_json(path/ENTRY).get('used_at',max([path.stat().st_mtime,*[p.stat().st_mtime for p in files]]))
                 if type(used) not in (int,float) or not math.isfinite(used):used=time.time()
                 busy=invalid or path.resolve() in protected
-                if root==state_dir() and not read_json(path/ENTRY):
+                if legacy_root(root) and not read_json(path/ENTRY):
                     pid=read_json(path/'plan.json').get('pid',0)
                     if type(pid) is int and pid>0 and diagnostics.alive(pid):busy=True
                 result.append({'path':path,'root':root,'size':size,'used':used,'known':known,'protected':busy})
@@ -196,7 +198,7 @@ def entries():
 
 def remove_entry(row):
     root=no_links(row['root']);path=no_links(row['path'])
-    if path.parent!=root or root not in roots() or not managed(path,root==state_dir()):raise ValueError('拒绝删除未识别的缓存。')
+    if path.parent!=root or root not in roots() or not managed(path,legacy_root(root)):raise ValueError('拒绝删除未识别的缓存。')
     tree(path);shutil.rmtree(path)
 
 def summary():
@@ -228,7 +230,7 @@ def reuse_package(cache,desc):
     if destination.exists():return
     for root in roots():
         old=root/cache.name
-        if old==cache or not old.is_dir() or not managed(old,root==state_dir()):continue
+        if old==cache or not old.is_dir() or not managed(old,legacy_root(root)):continue
         source=old/'package.zip'
         if not source.is_file() or source.stat().st_size>desc['size']:continue
         temporary=cache/'package.copying'
@@ -242,7 +244,7 @@ def confirm_success(stage):
     """Called only after the running version matches a successful installer result."""
     with operation():
         stage=Path(stage);root=stage.parent
-        if root not in roots() or not managed(stage,root==state_dir()):return
+        if root not in roots() or not managed(stage,legacy_root(root)):return
         protected,invalid=references()
         payload=stage/'payload'
         if payload.exists():tree(payload);shutil.rmtree(payload)
@@ -297,5 +299,5 @@ def preparing():
 def package_dir(root,sha):
     if not re.fullmatch('[0-9a-f]{64}',sha):raise ValueError('更新包标识无效。')
     path=no_links(root/('package-'+sha))
-    if path.exists() and any(path.iterdir()) and not managed(path,root==state_dir()):raise ValueError('更新包目录存在未知内容，已保留；请先选择其他缓存位置。')
+    if path.exists() and any(path.iterdir()) and not managed(path,legacy_root(root)):raise ValueError('更新包目录存在未知内容，已保留；请先选择其他缓存位置。')
     path.mkdir(exist_ok=True);mark(path,'package');return path

@@ -14,3 +14,7 @@ tools/
 .playwright-cli/
 
 release/
+
+# Portable application data and update caches are never source/release inputs.
+/data/
+/update/

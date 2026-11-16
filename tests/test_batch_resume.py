@@ -10,7 +10,7 @@ import unittest
 class BatchResume(unittest.TestCase):
     def test_official_verification_is_serial_and_preserves_form(self):
         with tempfile.TemporaryDirectory() as folder:
-            env=dict(os.environ,LOCALAPPDATA=folder,QT_QPA_PLATFORM='offscreen')
+            env=dict(os.environ,LOCALAPPDATA=folder,WVD_DATA_DIR=str(Path(folder)/'WebVideoDownloaderPrototype'),QT_QPA_PLATFORM='offscreen')
             result=subprocess.run([sys.executable,__file__,'--check'],env=env,
                 capture_output=True,text=True,encoding='utf-8',timeout=30)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)

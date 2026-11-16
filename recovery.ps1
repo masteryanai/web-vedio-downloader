@@ -2,7 +2,9 @@
 $ErrorActionPreference='Stop'
 [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
 $root=[IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
-$data=Join-Path $env:LOCALAPPDATA 'WebVideoDownloaderPrototype';$updates=Join-Path $data 'updates'
+$data=Join-Path $root 'data'
+if($env:WVD_DATA_DIR){if(-not [IO.Path]::IsPathRooted($env:WVD_DATA_DIR)){throw 'Invalid explicit data directory.'};$data=[IO.Path]::GetFullPath($env:WVD_DATA_DIR)}
+$updates=Join-Path $data 'updates'
 $cache=Join-Path $root 'update';$settingsFile=Join-Path $data 'settings.json'
 if(Test-Path -LiteralPath $settingsFile){$prefs=Get-Content -LiteralPath $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json;if($prefs.update_cache_dir){$cache=[string]$prefs.update_cache_dir}}
 $cache=[IO.Path]::GetFullPath($cache).TrimEnd('\')
@@ -61,6 +63,12 @@ try{
     Write-Host 'Web Video Downloader - independent repair and rollback'
     Write-Host 'Close the downloader first. Tasks, accounts and downloaded media are preserved.'
     if(-not (Test-Path -LiteralPath (Join-Path $root 'WebVideoDownloader.exe'))){throw 'Invalid application directory.'}
+    $portableMarker=Join-Path $data '.portable-data.json'
+    if(-not $env:WVD_DATA_DIR -and -not (Test-Path -LiteralPath $portableMarker)){
+        if((Test-Path -LiteralPath $data) -and @(Get-ChildItem -LiteralPath $data -Force).Count -gt 0){throw 'Unowned data directory. Start the application or use a separate program directory.'}
+        $null=New-Item -ItemType Directory -Force -Path $data
+        @{application='WebVideoDownloader';legacy_done=$false;install_dir=$root} | ConvertTo-Json | Set-Content -LiteralPath $portableMarker -Encoding UTF8
+    }
     $null=New-Item -ItemType Directory -Force -Path $updates
     $cacheGuard=[IO.File]::Open((Join-Path $updates 'writer.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
     CacheFolder

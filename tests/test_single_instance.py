@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 class SingleInstance(unittest.TestCase):
     def test_second_launch_restores_existing_window_without_constructing_another(self):
         with tempfile.TemporaryDirectory() as folder:
-            env=dict(os.environ,LOCALAPPDATA=folder,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1',PYTHONPATH=str(ROOT))
+            env=dict(os.environ,LOCALAPPDATA=folder,WVD_DATA_DIR=str(Path(folder)/'WebVideoDownloaderPrototype'),QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1',PYTHONPATH=str(ROOT))
             first=subprocess.Popen([sys.executable,__file__,'--primary',folder],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             try:
                 deadline=time.monotonic()+8
@@ -43,7 +43,7 @@ class SingleInstance(unittest.TestCase):
 
     def test_crashed_owner_does_not_leave_an_unusable_instance_lock(self):
         with tempfile.TemporaryDirectory() as folder:
-            env=dict(os.environ,LOCALAPPDATA=folder,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1',PYTHONPATH=str(ROOT))
+            env=dict(os.environ,LOCALAPPDATA=folder,WVD_DATA_DIR=str(Path(folder)/'WebVideoDownloaderPrototype'),QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1',PYTHONPATH=str(ROOT))
             first=subprocess.Popen([sys.executable,__file__,'--primary',folder],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             try:
                 deadline=time.monotonic()+8
@@ -57,7 +57,7 @@ class SingleInstance(unittest.TestCase):
 
     def test_simultaneous_startup_constructs_only_one_window(self):
         with tempfile.TemporaryDirectory() as folder:
-            env=dict(os.environ,LOCALAPPDATA=folder,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1',PYTHONPATH=str(ROOT))
+            env=dict(os.environ,LOCALAPPDATA=folder,WVD_DATA_DIR=str(Path(folder)/'WebVideoDownloaderPrototype'),QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1',PYTHONPATH=str(ROOT))
             children=[subprocess.Popen([sys.executable,__file__,'--race',folder],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE) for _ in range(2)]
             try:
                 for process in children:

@@ -9,7 +9,7 @@ import unittest
 class ReadyUI(unittest.TestCase):
     def test_ready_update_waits_for_consent_and_survives_reopening(self):
         with tempfile.TemporaryDirectory() as folder:
-            result=subprocess.run([sys.executable,__file__,'--check'],env=dict(os.environ,LOCALAPPDATA=folder,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=20)
+            result=subprocess.run([sys.executable,__file__,'--check'],env=dict(os.environ,LOCALAPPDATA=folder,WVD_DATA_DIR=str(Path(folder)/'WebVideoDownloaderPrototype'),QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=20)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
 

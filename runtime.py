@@ -1,4 +1,4 @@
-"""Paths shared by the Windows prototype and its bundled tools."""
+"""Shared paths for the portable Windows client and its bundled tools."""
 from __future__ import annotations
 
 import os
@@ -7,7 +7,7 @@ import shutil
 import sys
 
 APP_NAME = "Web Video Downloader"
-APP_VERSION = "0.11.0"
+APP_VERSION = "0.12.0"
 SITES = ("央视网", "好看视频", "抖音", "B站")
 
 
@@ -24,12 +24,26 @@ def find_tool(name: str) -> str:
     installed = shutil.which(name)
     if installed:
         return installed
-    raise RuntimeError(f"缺少 {name}，请使用完整的原型程序文件夹。")
+    raise RuntimeError(f"缺少 {name}，请使用完整的程序文件夹。")
 
 
 def default_download_dir() -> Path:
     return Path.home() / "Downloads" / "WebVideoDownloader"
 
 
-def app_data_dir() -> Path:
+def program_dir() -> Path:
+    return Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
+
+
+def legacy_data_dir() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "WebVideoDownloaderPrototype"
+
+
+def app_data_dir() -> Path:
+    # Explicit override is for isolated tests/development; never a silent fallback.
+    override = os.environ.get('WVD_DATA_DIR')
+    if override:
+        path = Path(override)
+        if not path.is_absolute():raise ValueError('WVD_DATA_DIR 必须使用绝对路径。')
+        return path
+    return program_dir() / 'data'

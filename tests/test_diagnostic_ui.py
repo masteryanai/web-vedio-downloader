@@ -9,7 +9,7 @@ import unittest
 class DiagnosticUI(unittest.TestCase):
     def run_check(self,mode,timeout=15):
         with tempfile.TemporaryDirectory() as folder:
-            result=subprocess.run([sys.executable,__file__,mode],env=dict(os.environ,LOCALAPPDATA=folder,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=timeout)
+            result=subprocess.run([sys.executable,__file__,mode],env=dict(os.environ,LOCALAPPDATA=folder,WVD_DATA_DIR=str(Path(folder)/'WebVideoDownloaderPrototype'),QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=timeout)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_background_export_and_user_review_link(self):self.run_check('--export')

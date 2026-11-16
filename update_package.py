@@ -47,6 +47,8 @@ def backup_info(install):
         if marker.get('application')!=APPLICATION or marker.get('install_dir','').casefold()!=str(root).casefold() or marker.get('token')!=info.get('token'):return None
         inv=validate_inventory(json.loads((folder/'inventory.json').read_text(encoding='utf-8-sig')))
         if inv['version']!=info['version']:return None
+        current=installed_inventory(root)
+        if current and current['data_schema']!=inv['data_schema']:return None
         try:
             catalog=json.loads((app_data_dir()/'updates'/'release-catalog.json').read_text(encoding='utf-8'))
             if inv['version'] in catalog.get('revoked_versions',[]):return None
