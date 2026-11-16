@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>影片库 UI 方案 · 审阅稿</title>
+<style>body{margin:0;background:#151b23;color:#cad8e6;font:15px 'Microsoft YaHei UI',sans-serif}header{padding:20px 28px;border-bottom:1px solid #344454}h1{font-size:22px;margin:0 0 10px}p{color:#8fa9be;margin:8px 0}nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}button,a{padding:9px 16px;background:#2e4153;border:0;border-radius:3px;color:#dceaf6;cursor:pointer;text-decoration:none}button.active{background:#1689bd;color:white}main{padding:18px;max-width:1440px;margin:auto}img{display:block;width:100%;height:auto;box-shadow:0 8px 35px #0005}#caption{padding:12px 0;color:#a1bace}footer{padding:0 28px 22px;color:#7c99b1}</style>
+<header><h1>Steam 风格影片库 · 整体设计审阅</h1><p>静态布局草图，封面、条目与速度均为示意。图中按钮不执行真实操作；正式程序尚未修改。</p><nav id="tabs"></nav></header>
+<main><div id="caption"></div><img id="figure" alt="影片库设计草图"></main>
+<footer>已确认：默认影片库／每季独立／多磁盘存储／批量选集／旧文件原位导入／外部播放／本季免提示／新集仅提示／深色与高 DPI。</footer>
+<script>
+const pages=[['影片库','library','默认首页，每一季独立入口，跨存储库浏览。'],['季详情','season','统一管理选集、播放、下载与文件位置。'],['批量添加','batch','解析发现合集后，在同一弹窗选择存储库、画质与缺失集。'],['播放确认','play','免提示仅限本季；调用系统默认或指定外部播放器。'],['下载任务','tasks','任务页保留速度趋势、整体统计、批量操作与详情。']];
+function show(i){document.getElementById('figure').src=pages[i][1]+'-v3.png';document.getElementById('caption').textContent=pages[i][2];document.querySelectorAll('button').forEach((b,n)=>b.classList.toggle('active',n===i));location.hash=String(i)}
+pages.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p[0];b.onclick=()=>show(i);document.getElementById('tabs').appendChild(b)});const i=Number(location.hash.slice(1));show(Number.isInteger(i)&&i>=0&&i<pages.length?i:0);
+</script></html>

@@ -42,6 +42,7 @@ def post_info(post, url):
         formats = [{'id': 'images', 'label': f'保存原图 · {len(images)} 张 · ZIP', 'width': 0, 'height': 0, 'filesize': None, 'ext': 'zip'},
                    {'id': 'slideshow', 'label': '合成带配乐的视频 · MP4', 'width': width, 'height': height, 'filesize': None, 'ext': 'mp4', '_audio_expected': True}]
         return {'title': title, 'site': '抖音', 'url': url, 'duration': 0, 'formats': formats,
+                'thumbnail':images[0]['url'] if images else '', '_video_id':str(post.get('aweme_id') or ''),
                 '_engine': 'douyin-post', '_kind': 'images', '_images': images, '_music': music}
     streams = video.get('bit_rate') or [{'play_addr': video.get('play_addr'), 'bit_rate': 0}]
     formats = []
@@ -56,6 +57,7 @@ def post_info(post, url):
         raise VideoError('作品已识别，但网站没有返回可下载的原图或视频；请在官方页面完成访问验证后重试。')
     formats.sort(key=lambda f: f['width'] * f['height'], reverse=True)
     return {'title': title, 'site': '抖音', 'url': url, 'duration': float(video.get('duration') or 0)/1000,
+            'thumbnail':media_url(video.get('cover') or {}) or '', '_video_id':str(post.get('aweme_id') or ''),
             'formats': formats, '_engine': 'douyin-post', '_kind': 'video'}
 
 

@@ -57,9 +57,24 @@ def summarize(queue,now=None):
     active=sum(row['id'] in queue.active for row in rows)
     return {'speed':speed,'percent':percent,'unknown':unknown,'count':len(rows),'completed':completed,
             'queued':len(queue.waiting),'active':active,'processing':max(0,active-len(transfers)),
-            'paused':sum(row['state'] in ('paused','failed') for row in rows),'transfers':transfers}
+            'paused':sum(row['state'] in ('paused','failed') for row in rows),'failed':sum(row['state']=='failed' for row in rows),'transfers':transfers}
 
 
 def overview(stats):
+    if stats.get('paused') and not stats['active'] and not stats['queued']:
+        return f"待继续 {stats['paused']-stats.get('failed',0)} · 失败 {stats.get('failed',0)}"
     progress='本轮下载完成' if stats['completed'] else f"本轮下载 {stats['percent']:.1f}%" if stats['percent'] is not None else '本轮总量未知' if stats['count'] else '本轮暂无任务'
     return f"{progress} · 活动 {stats['active']} · 排队 {stats['queued']} · 解析/处理 {stats['processing']}"
+
+
+class LivePresentation:
+    """Three-second completion is a transition, never renewed by a refresh."""
+    def __init__(self):self.completed_at=None;self.signature=None
+    def apply(self,stats,signature,now=None):
+        now=time.monotonic() if now is None else now
+        if stats['completed'] and not stats['active'] and not stats['queued']:
+            if self.signature!=signature:self.completed_at=now;self.signature=signature
+            if now-self.completed_at>=3:
+                return {**stats,'percent':None,'count':0,'completed':False,'speed':0,'transfers':[],'idle':True}
+        else:self.completed_at=None;self.signature=None
+        return {**stats,'idle':not stats['count'] and not stats['active'] and not stats['queued']}

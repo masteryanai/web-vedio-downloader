@@ -16,6 +16,15 @@ class QueueTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QCoreApplication.instance() or QCoreApplication([])
 
+    def test_restart_pending_counts_and_cancellation_return_to_idle(self):
+        with tempfile.TemporaryDirectory() as folder,patch('download_tasks.directory',return_value=Path(folder)):
+            info={'url':'https://example.com/1','site':'test','title':'pending','formats':[{'id':'best'}]}
+            first=tasks.create(info,'best',folder);second=tasks.create(info,'best',folder);second['state']='failed';tasks.save(second)
+            queue=DownloadQueue();stats=queue.statistics()
+            self.assertEqual(stats['paused'],2);self.assertEqual(stats['failed'],1);self.assertFalse(stats['idle']);self.assertIsNone(stats['percent'])
+            queue.discard(first['id']);self.assertEqual(queue.statistics()['paused'],1)
+            queue.discard(second['id']);self.assertTrue(queue.statistics()['idle'])
+
     def wait(self, predicate, timeout=8):
         deadline = time.monotonic()+timeout
         while not predicate() and time.monotonic()<deadline:

@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt,QObject,QTimer,QPoint,QRect,Signal
 from PySide6.QtGui import QGuiApplication,QIcon,QPixmap,QPainter,QColor,QPen
 from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
-    QCheckBox,QSpinBox,QDoubleSpinBox,QComboBox,QFrame,QProgressBar,QMenu,QSystemTrayIcon,QMessageBox,QSizePolicy)
+    QCheckBox,QSpinBox,QDoubleSpinBox,QComboBox,QFrame,QProgressBar,QMenu,QSystemTrayIcon,QMessageBox,QSizePolicy,QScrollArea,QWidget)
 import preferences
 import diagnostics
 from transfer_stats import speed_text,overview
@@ -37,8 +37,8 @@ class CloseChoice(QDialog):
 
 class SettingsDialog(QDialog):
     def __init__(self,desktop):
-        super().__init__(desktop.window);self.desktop=desktop;self.setWindowTitle('设置');self.resize(440,390)
-        cfg=preferences.load();layout=QVBoxLayout(self)
+        super().__init__(desktop.window);self.desktop=desktop;self.setWindowTitle('设置');self.resize(550,680)
+        cfg=preferences.load();outer=QVBoxLayout(self);scroll=QScrollArea();scroll.setWidgetResizable(True);content=QWidget();scroll.setWidget(content);outer.addWidget(scroll);layout=QVBoxLayout(content)
         layout.addWidget(QLabel('同时运行的下载任务数（1～10）'))
         self.count=QSpinBox();self.count.setRange(1,10);self.count.setValue(desktop.queue.limit);layout.addWidget(self.count)
         self.limit_enabled=QCheckBox('限制媒体下载总速度（所有任务共享）');self.limit_enabled.setChecked(cfg['download_limit_mib']>0);layout.addWidget(self.limit_enabled)
@@ -59,6 +59,8 @@ class SettingsDialog(QDialog):
         from runtime import app_data_dir
         data_label=QLabel('便携数据目录：'+str(app_data_dir()));data_label.setWordWrap(True);layout.addWidget(data_label)
         cache_button=QPushButton('更新缓存：目录与清理');cache_button.clicked.connect(self.show_cache);layout.addWidget(cache_button)
+        if hasattr(desktop.window,'workspace'):
+            library_button=QPushButton('影片存储库与外部播放器');library_button.clicked.connect(desktop.window.workspace.storage);layout.addWidget(library_button)
         self.error=QLabel();self.error.setWordWrap(True);layout.addWidget(self.error)
         save=QPushButton('保存');save.clicked.connect(self.apply);layout.addWidget(save)
         desktop.preferences_changed.connect(self.sync)
@@ -83,11 +85,12 @@ class FloatingPanel(QFrame):
         self.pressed=False;self.dragging=False;self.menu_open=False;self.page_id=None;self.stats=None
         self.setObjectName('floatingMonitor');self.setStyleSheet('#floatingMonitor {background:#f5f8ff;border:1px solid #8ca9df;border-radius:7px;}')
         self.setWindowTitle('下载悬浮框');self.setMouseTracking(True);self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.layout_box=QVBoxLayout(self);self.layout_box.setContentsMargins(6,6,6,6)
         self.content=QFrame();box=QVBoxLayout(self.content);box.setContentsMargins(0,0,0,0);box.setSpacing(4)
         self.title=QLabel('总速度');self.title.setStyleSheet('font-size:11px;');self.title.setMinimumWidth(0);self.title.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred)
         self.detail=QLabel('0 B/s');self.detail.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
-        self.detail.setStyleSheet('font-size:12px;font-weight:600;color:#285ed4;');self.detail.setSizePolicy(QSizePolicy.Policy.Fixed,QSizePolicy.Policy.Preferred)
+        self.detail.setStyleSheet('font-size:12px;font-weight:600;color:#48c8ef;');self.detail.setSizePolicy(QSizePolicy.Policy.Fixed,QSizePolicy.Policy.Preferred)
         row=QHBoxLayout();row.setContentsMargins(0,0,0,0);row.setSpacing(4);row.addWidget(self.title,1);row.addWidget(self.detail);box.addLayout(row)
         self.bar=QProgressBar();self.bar.setFixedHeight(18);self.bar.setRange(0,100);self.bar.setValue(0);self.bar.setFormat('暂无任务');box.addWidget(self.bar)
         self.tab=QLabel('下\n载');self.tab.setAlignment(Qt.AlignmentFlag.AlignCenter);self.tab.hide()
@@ -107,6 +110,10 @@ class FloatingPanel(QFrame):
 
     def watch_screen(self,screen):
         screen.availableGeometryChanged.connect(self.screen_changed);screen.geometryChanged.connect(self.screen_changed)
+    def paintEvent(self,event):
+        painter=QPainter(self);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor('#557f9f'),1));painter.setBrush(QColor('#243c50'))
+        painter.drawRoundedRect(self.rect().adjusted(1,1,-1,-1),7,7)
     def screen_added(self,screen):self.watch_screen(screen);self.ensure_visible()
     def screen_changed(self,*_):self.ensure_visible()
     def area(self):
@@ -127,6 +134,7 @@ class FloatingPanel(QFrame):
         if not cfg['float_auto_hide']:self.hide_timer.stop();self.expand()
         elif self.edge and not self.underMouse():self.hide_timer.start()
     def pages(self):
+        if (self.stats or {}).get('idle'):return [None]
         return [None,'progress']+[('task',row['id']) for row in (self.stats or {}).get('transfers',[])]
     def update_stats(self,stats):
         self.stats=stats
@@ -144,11 +152,15 @@ class FloatingPanel(QFrame):
         if row:title=row['title'];value=speed_text(row['live_speed'])
         elif self.page_id=='progress':title='总进度';value=progress
         else:title='总速度';value=speed_text(self.stats['speed'])
+        if self.stats.get('idle'):title='暂无任务';value='0 B/s';progress='暂无任务';percent=None
+        elif not self.stats['active'] and not self.stats['queued'] and self.stats.get('paused'):
+            title='待继续 '+str(self.stats['paused']-self.stats.get('failed',0));value='失败 '+str(self.stats.get('failed',0));progress='任务待处理';percent=None
+        elif self.stats.get('external_busy') and not self.stats.get('transfers'):title='解析/处理中';value='请稍候';progress='解析/处理中';percent=None
         from PySide6.QtGui import QFontMetrics
         from PySide6.QtGui import QFont
         font=QFont(self.detail.font());font.setPixelSize(12)
         while QFontMetrics(font).horizontalAdvance(value)>120 and font.pixelSize()>9:font.setPixelSize(font.pixelSize()-1)
-        if self.detail.font().pixelSize()!=font.pixelSize():self.detail.setStyleSheet(f'font-size:{font.pixelSize()}px;font-weight:600;color:#285ed4;')
+        if self.detail.font().pixelSize()!=font.pixelSize():self.detail.setStyleSheet(f'font-size:{font.pixelSize()}px;font-weight:600;color:#48c8ef;')
         available=max(0,self.expanded_size().width()-14-4-QFontMetrics(font).horizontalAdvance(value))
         self.title.setText(QFontMetrics(self.title.font()).elidedText(title,Qt.TextElideMode.ElideRight,available))
         self.title.setToolTip(title);self.detail.setText(value)
@@ -243,6 +255,10 @@ class DesktopController(QObject):
         for name in ('task_dialog','accounts_dialog','diagnostic_dialog','update_dialog','browser_dialog','resume_browser'):
             widget=getattr(self.window,name,None)
             if widget and widget.isVisible():self.hidden_windows.append(widget);widget.hide()
+        workspace=getattr(self.window,'workspace',None)
+        if workspace:
+            for widget in (workspace.add_dialog,workspace.import_dialog):
+                if widget and widget.isVisible():self.hidden_windows.append(widget);widget.hide()
         self.was_maximized=self.window.isMaximized();self.hidden=True;self.window.hide();diagnostics.event('desktop.hidden');return True
     def allow_close(self):
         action=self.cfg['close_action'];remember=False
@@ -278,9 +294,17 @@ class DesktopController(QObject):
     def refresh(self):
         if self.stopped:return
         stats=self.queue.statistics()
+        if self.window.is_busy():stats={**stats,'external_busy':True,'idle':False,'count':max(1,stats['count']),'completed':False,'processing':stats['processing']+1}
         self.window.total_speed_label.setText('整体下载速度：'+speed_text(stats['speed']))
         self.window.total_speed_label.setToolTip(overview(stats));self.tray.setToolTip('Web Video Downloader\n总速度 '+speed_text(stats['speed']))
         if self.panel:self.panel.update_stats(stats)
+        if hasattr(self.window,'workspace'):
+            self.window.workspace.status.setText(overview(stats)+' · '+speed_text(stats['speed']))
+            if not self.window.is_busy():
+                if stats.get('idle'):
+                    self.window.status_text.setText('暂无任务');self.window.progress_bar.setRange(0,100);self.window.progress_bar.setValue(0);self.window.detail.clear()
+                elif stats['active'] or stats['queued'] or stats.get('paused'):
+                    self.window.status_text.setText(overview(stats));self.window.progress_bar.setRange(0,100);self.window.progress_bar.setValue(int(stats['percent'] or 0))
         if self.hidden and not QSystemTrayIcon.isSystemTrayAvailable():
             self.restore_main();QMessageBox.information(self.window,'托盘暂不可用','已恢复主窗口，避免隐藏后无法找回。')
     def shutdown(self):

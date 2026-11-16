@@ -103,7 +103,12 @@ class Fixture {
                     self.assertFalse(result['ok']);self.assertEqual(result['failed_phase'],'confirm_startup');self.assertEqual(result['rollback_state'],'restored')
                     self.assertTrue(verify_tree(install,base)[0]);self.assertIsNone(ui.poll());self.assertTrue(self.u.IsWindowVisible(handle))
                     self.wait(lambda:'更新未完成' in self.child_texts(handle))
-                    self.u.PostMessageW(handle,0x10,0,0);self.wait(lambda:ui.poll() is not None);self.assertEqual(ui.returncode,1)
+                    # A posted close can precede the final timer callback returning.
+                    # Retry through the native message loop rather than racing that callback.
+                    def close_failure():
+                        if ui.poll() is not None:return True
+                        self.u.PostMessageW(handle,0x10,0,0);return False
+                    self.wait(close_failure);self.assertEqual(ui.returncode,1)
                 self.assertTrue((stage/'install.log').exists())
             finally:
                 if gate.poll() is None:gate.terminate();gate.wait(5)

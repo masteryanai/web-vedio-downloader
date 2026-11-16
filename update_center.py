@@ -11,6 +11,8 @@ import diagnostics
 def can_install(parent):
     if parent is None:return True
     queue=getattr(parent,'queue',None);dialog=getattr(parent,'diagnostic_dialog',None)
+    workspace=getattr(parent,'workspace',None)
+    if workspace and workspace.jobs.running:return False
     return not ((getattr(parent,'is_busy',lambda:False)()) or (queue and (queue.active or queue.waiting)) or getattr(parent,'resume_pending',[]) or (dialog and dialog.thread is not None))
 
 

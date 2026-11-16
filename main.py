@@ -1,8 +1,4 @@
-"""Functional Windows prototype: inspect a link, choose a stream, save a video.
-
-This prototype checks the real download and account-session workflow. It is not
-a production release or a claim of universal compatibility with any platform.
-"""
+"""Portable Windows media library, account sessions and verified video downloads."""
 from __future__ import annotations
 
 import argparse
@@ -332,9 +328,11 @@ def gui(args: argparse.Namespace) -> int:
             self.log_box.setMaximumHeight(120)
             body.addWidget(self.log_box, 1)
             outer.addWidget(content, 1)
+            from library_ui import install
+            old=self.takeCentralWidget();self.workspace=install(self,content,old)
 
         def is_busy(self):
-            return self.active_thread is not None or self.browser_dialog is not None or self.resume_browser is not None
+            return self.active_thread is not None or self.browser_dialog is not None or self.resume_browser is not None or (hasattr(self,'workspace') and self.workspace.batch_preparing)
 
         def refresh_buttons(self):
             busy = self.is_busy() or self.close_when_idle
@@ -396,6 +394,7 @@ def gui(args: argparse.Namespace) -> int:
             dialog.finished.connect(lambda _:setattr(self,'diagnostic_dialog',None));dialog.show()
 
         def show_tasks(self):
+            if hasattr(self,'workspace'):self.workspace.show_tasks();return
             if self.task_dialog:
                 self.task_dialog.show();self.task_dialog.raise_();return
             from task_view import TaskDialog
@@ -569,7 +568,8 @@ def gui(args: argparse.Namespace) -> int:
                 self.detail.setText("请在新窗口查看官方作品页面；需要时手动完成登录或验证。")
                 self.refresh_buttons()
             else:
-                self.start_task("inspect", lambda worker: inspect_video(text, cookies, worker.log.emit, self.cancel_event))
+                from collection_media import inspect_collection
+                self.start_task("inspect", lambda worker: inspect_collection(text, cookies, worker.log.emit, self.cancel_event))
 
         def capture_received(self, info):
             self.browser_result = info
@@ -607,6 +607,13 @@ def gui(args: argparse.Namespace) -> int:
 
         def download(self):
             if not self.info or self.is_busy(): return
+            if hasattr(self,'workspace') and self.workspace.add_dialog.isVisible() and not self.resume_task_id:
+                try:
+                    count=self.workspace.add_controls.submit()
+                    if count is not None:
+                        self.append_log(f'已入库，正在准备 {count} 集的任务。' if self.workspace.batch_preparing else f'已入库并排队 {count} 集。');self.workspace.add_dialog.hide();self.url_input.clear()
+                except Exception as error:QMessageBox.warning(self,'未能加入库',str(error))
+                return
             info=self.info; selected=self.quality.currentData();folder=self.output_path.text()
             if selected is None: return
             try:
@@ -703,6 +710,7 @@ def gui(args: argparse.Namespace) -> int:
                 self.progress_bar.setValue(0)
                 self.append_log(f"解析完成：{result['site']}，{len(result['formats'])} 档画质。")
                 diagnostics.event('ui.result.applied',result['site'])
+                if hasattr(self,'workspace') and not self.resume_task_id and not self.resume_after_inspect:self.workspace.inspected(result)
 
         @Slot(str)
         def task_failure(self, message):
@@ -761,6 +769,7 @@ def gui(args: argparse.Namespace) -> int:
             if self.current_task_id: self.queue.discard(self.current_task_id)
 
         def cancel(self):
+            if hasattr(self,'workspace') and self.workspace.batch_preparing:self.workspace.cancel_batches();return
             if self.is_busy():
                 self.cancel_event.set()
                 if self.browser_dialog is not None: self.browser_dialog.reject()
@@ -787,6 +796,8 @@ def gui(args: argparse.Namespace) -> int:
                 event.ignore();self.maybe_close();return
             if not self.update_scheduler.shutdown():
                 QTimer.singleShot(100,self.close);event.ignore();return
+            if hasattr(self,'workspace') and not self.workspace.shutdown():
+                QTimer.singleShot(100,self.close);event.ignore();return
             if self.task_dialog:self.task_dialog.close()
             if self.accounts_dialog:self.accounts_dialog.close()
             if self.diagnostic_dialog:self.diagnostic_dialog.close()
@@ -808,7 +819,8 @@ def gui(args: argparse.Namespace) -> int:
     app.setApplicationName("WebVideoDownloader")
     app.setOrganizationName("LocalTools")
     app.setFont(QFont("Microsoft YaHei UI", 10))
-    app.setStyleSheet(STYLE)
+    from steam_theme import STYLE as steam_style
+    app.setStyleSheet(steam_style)
     recorder=diagnostics.start()
     heartbeat=QTimer(app);heartbeat.setInterval(500)
     if recorder:heartbeat.timeout.connect(recorder.beat);heartbeat.start()

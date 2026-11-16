@@ -6,9 +6,10 @@ import uuid
 from runtime import app_data_dir
 
 DEFAULTS={'parallel_downloads':5,'close_action':'ask','float_enabled':False,
-          'float_opacity':85,'float_auto_hide':True,'float_position':None,'float_edge':'','auto_check_updates':True,'update_interval_hours':4,'download_limit_mib':0,'update_cache_dir':''}
+          'float_opacity':85,'float_auto_hide':True,'float_position':None,'float_edge':'','auto_check_updates':True,'update_interval_hours':4,'download_limit_mib':0,'update_cache_dir':'','external_player':''}
 
 def valid(key,value):
+    if key=='external_player':return isinstance(value,str) and (not value or Path(value).is_absolute()) and '\x00' not in value
     if key=='update_cache_dir':return isinstance(value,str) and (not value or Path(value).is_absolute()) and len(value)<32000 and "\x00" not in value
     if key=='download_limit_mib':
         try:return type(value) in (int,float) and math.isfinite(value) and (value==0 or .01<=value<=102400)

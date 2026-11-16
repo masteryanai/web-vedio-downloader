@@ -23,10 +23,10 @@ function Ready {
     $file=Join-Path $stage 'window-ready.json';$temp=$file+'.tmp';[IO.File]::WriteAllText($temp,$value,(New-Object Text.UTF8Encoding($false)))
     if([IO.File]::Exists($file)){[IO.File]::Replace($temp,$file,$null)}else{[IO.File]::Move($temp,$file)}
 }
-$form=New-Object Windows.Forms.Form;$form.Text='正在安装更新 · Web Video Downloader';$form.ClientSize=New-Object Drawing.Size(700,425);$form.MinimumSize=New-Object Drawing.Size(680,445);$form.StartPosition='CenterScreen';$form.BackColor=[Drawing.Color]::FromArgb(246,248,252);$form.Font=New-Object Drawing.Font('Microsoft YaHei UI',10);$form.MaximizeBox=$false
+$form=New-Object Windows.Forms.Form;$form.Text='正在安装更新 · Web Video Downloader';$form.ClientSize=New-Object Drawing.Size(700,425);$form.MinimumSize=New-Object Drawing.Size(680,445);$form.StartPosition='CenterScreen';$form.BackColor=[Drawing.Color]::FromArgb(23,29,37);$form.ForeColor=[Drawing.Color]::FromArgb(200,216,232);$form.Font=New-Object Drawing.Font('Microsoft YaHei UI',10);$form.MaximizeBox=$false
 $title=New-Object Windows.Forms.Label;$title.Text=('更新至 v'+$config.version);$title.Location=New-Object Drawing.Point(24,20);$title.Size=New-Object Drawing.Size(650,28);$title.Font=New-Object Drawing.Font('Microsoft YaHei UI',15,[Drawing.FontStyle]::Bold);$form.Controls.Add($title)
 $phase=New-Object Windows.Forms.Label;$phase.Text='正在启动独立安装器…';$phase.Location=New-Object Drawing.Point(24,70);$phase.Size=New-Object Drawing.Size(650,34);$phase.Font=New-Object Drawing.Font('Microsoft YaHei UI',16,[Drawing.FontStyle]::Bold);$form.Controls.Add($phase)
-$metrics=New-Object Windows.Forms.Label;$metrics.Text='请稍候';$metrics.ForeColor=[Drawing.Color]::FromArgb(40,94,212);$metrics.Location=New-Object Drawing.Point(24,110);$metrics.Size=New-Object Drawing.Size(650,30);$metrics.Font=New-Object Drawing.Font('Microsoft YaHei UI',14,[Drawing.FontStyle]::Bold);$form.Controls.Add($metrics)
+$metrics=New-Object Windows.Forms.Label;$metrics.Text='请稍候';$metrics.ForeColor=[Drawing.Color]::FromArgb(65,197,244);$metrics.Location=New-Object Drawing.Point(24,110);$metrics.Size=New-Object Drawing.Size(650,30);$metrics.Font=New-Object Drawing.Font('Microsoft YaHei UI',14,[Drawing.FontStyle]::Bold);$form.Controls.Add($metrics)
 $bar=New-Object Windows.Forms.ProgressBar;$bar.Location=New-Object Drawing.Point(24,150);$bar.Size=New-Object Drawing.Size(650,23);$bar.Style='Marquee';$form.Controls.Add($bar)
 $detail=New-Object Windows.Forms.TextBox;$detail.Multiline=$true;$detail.ReadOnly=$true;$detail.ScrollBars='Vertical';$detail.BorderStyle='None';$detail.BackColor=$form.BackColor;$detail.Location=New-Object Drawing.Point(24,190);$detail.Size=New-Object Drawing.Size(650,90);$detail.Text='安装期间可以最小化窗口；为保护程序和数据，不能中途取消。';$form.Controls.Add($detail)
 $elapsed=New-Object Windows.Forms.Label;$elapsed.Location=New-Object Drawing.Point(24,293);$elapsed.Size=New-Object Drawing.Size(650,25);$form.Controls.Add($elapsed)
@@ -36,6 +36,7 @@ $repair=New-Object Windows.Forms.Button;$repair.Text='修复与回退';$repair.E
 $close=New-Object Windows.Forms.Button;$close.Text='安装中，请稍候';$close.Enabled=$false;$close.Location=New-Object Drawing.Point(452,365);$close.Size=New-Object Drawing.Size(222,36);$form.Controls.Add($close)
 $logs.Add_Click({$path=Join-Path $stage 'install.log';if(Test-Path -LiteralPath $path){Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$path+'"') -WindowStyle Normal}})
 $repair.Add_Click({$path=Join-Path $root '修复与回退.cmd';if(Test-Path -LiteralPath $path){Start-Process -FilePath $path -WorkingDirectory $root -WindowStyle Normal}})
+$form.Controls | Where-Object {$_ -is [Windows.Forms.Button]} | ForEach-Object {$_.FlatStyle='Flat';$_.BackColor=[Drawing.Color]::FromArgb(52,68,84);$_.ForeColor=[Drawing.Color]::FromArgb(220,233,245)}
 $close.Add_Click({$form.Close()})
 $form.Add_FormClosing({param($sender,$eventArgs) if(-not $script:terminal){$eventArgs.Cancel=$true;$note.Text='安装尚未结束，可以最小化；请等待事务完成或失败处理结束。'}})
 function Failure($Text){

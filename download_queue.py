@@ -32,6 +32,11 @@ class Job(QObject):
                 task['state'] = 'running'; task['stage'] = '准备媒体地址'; tasks.save(task)
                 try:
                     engine._check_cancel(self.cancel)
+                    if task.get('library_episode'):
+                        from media_library import Catalogue
+                        from pathlib import Path
+                        catalogue=Catalogue();episode=catalogue.episode(task['library_episode']);folder=catalogue.output(episode['work_id'])
+                        if Path(task['output']).resolve()!=folder:raise ValueError('任务保存位置与当前存储库不一致，请从影片库重新加入。')
                     def log(text):
                         self.message.emit(task_id, text)
                         self.progress.emit(task_id, {'stage':text})
@@ -46,6 +51,15 @@ class Job(QObject):
                     if info is None:
                         self.progress.emit(task_id, {'stage':'重新解析媒体地址', 'download_percent':task.get('download_percent')})
                         info = engine.inspect_video(task['url'], self.cookies, log, self.cancel)
+                    if task.get('quality_policy') and not task.get('quality_resolved'):
+                        from media_library import choose_format,format_height
+                        policy=task['quality_policy'];selected=choose_format(info,policy['height'],policy['strict'],policy.get('kind'))
+                        task['format_id']=selected['id'];task['format']={k:selected[k] for k in ('width','height','fps','vcodec','acodec') if selected.get(k) is not None}
+                        task['quality_resolved']=True;tasks.save(task)
+                        if not policy.get('kind'):
+                            if not format_height(selected):log('源站未返回可靠分辨率，使用原始流并在下载完成后校验。')
+                            elif format_height(selected)<policy['height']:log('所选档位缺失，使用实际可用画质：'+selected['label'])
+                    if task.get('library_title'):info={**info,'title':task['library_title']}
                     self.resolved.emit(task_id, info)
                     result = engine.download_video(info, task['format_id'], task['output'], self.cookies,
                         progress, log,
@@ -57,6 +71,7 @@ class Job(QObject):
                         latest = tasks.load(task_id)
                         if latest['state'] not in tasks.TERMINAL:
                             latest['state'] = 'paused' if self.cancel.is_set() else 'failed'
+                            latest['stage']=str(error)[:500]
                             tasks.save(latest)
                     raise
         except Exception as error:
@@ -86,6 +101,7 @@ class DownloadQueue(QObject):
         self.completed_rows = {}
         self.deleting = set()
         self.stopping = False
+        self.initial_pending={row['id']:row for row in tasks.pending()}
 
     def cached(self, task_id):
         entry = self.payloads.get(task_id)
@@ -99,6 +115,7 @@ class DownloadQueue(QObject):
             task = tasks.load(task_id)
             if task['state'] in tasks.TERMINAL: return False
             task['state'] = 'queued'; tasks.save(task)
+        self.initial_pending.pop(task_id,None)
         if self.batch_rows and all(row['state'] in tasks.TERMINAL for row in self.batch_rows.values()):self.batch_rows.clear()
         self.batch_rows[task_id]=copy.deepcopy(task)
         self.snapshots.pop(task_id,None)
@@ -206,6 +223,7 @@ class DownloadQueue(QObject):
                 return False
             else:
                 tasks.discard(task_id)
+                self.initial_pending.pop(task_id,None)
                 self.snapshots.pop(task_id,None);self.payloads.pop(task_id,None);self.entries.pop(task_id,None)
                 self.batch_rows.pop(task_id,None)
                 self.removed.emit(task_id)
@@ -219,13 +237,19 @@ class DownloadQueue(QObject):
         if task_id in self.active or any(row[0]==task_id for row in self.waiting):
             raise ValueError('任务仍在运行或排队，不能删除记录。')
         tasks.delete_history(task_id,clean_cache=clean_cache)
+        self.initial_pending.pop(task_id,None)
         self.completed_rows.pop(task_id,None);self.snapshots.pop(task_id,None)
         self.entries.pop(task_id,None);self.payloads.pop(task_id,None)
         self.changed.emit()
 
     def statistics(self):
-        from transfer_stats import summarize
-        return summarize(self)
+        from transfer_stats import summarize,LivePresentation
+        if not hasattr(self,'presentation'):self.presentation=LivePresentation()
+        stats=summarize(self);pending=[r for key,r in self.initial_pending.items() if key not in self.batch_rows and r['state'] not in tasks.TERMINAL]
+        if pending:
+            stats.update(count=stats['count']+len(pending),completed=False,paused=stats['paused']+len(pending),failed=stats.get('failed',0)+sum(r['state']=='failed' for r in pending))
+            if not stats['active'] and not stats['queued']:stats['percent']=None
+        return self.presentation.apply(stats,tuple(self.batch_rows))
 
     def rows(self):
         result = {row['id']:row for row in tasks.records()}

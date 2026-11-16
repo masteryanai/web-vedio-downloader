@@ -26,7 +26,8 @@
       "b23.tv",
       "bili2233.cn"
     ],
-    "status": "登录后下载已验证",
+    "status": "按账号权限下载；番剧/合集/分P批量支持",
+    "collection_adapted_at": "2026-11-16",
     "handler": "engine:_inspect_ytdlp",
     "adapted_at": "2026-11-13"
   },
@@ -45,7 +46,8 @@
     "domains": [
       "agedm.io"
     ],
-    "status": "单集完整下载已验证",
+    "status": "视频下载；详情页/播放页合集批量支持",
+    "collection_adapted_at": "2026-11-16",
     "handler": "age_media:inspect_age",
     "adapted_at": "2026-11-13"
   }

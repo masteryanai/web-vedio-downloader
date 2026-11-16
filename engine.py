@@ -476,7 +476,7 @@ def _inspect_ytdlp(url, cookies, log, cancel):
     if raw.get("_type") in ("playlist", "multi_video"):
         raise VideoError("该链接返回了多个视频或特殊分段，请复制具体单个视频/分P的链接。")
     if raw.get("is_live"):
-        raise VideoError("当前原型暂不录制直播，请使用已发布的视频链接。")
+        raise VideoError("当前版本暂不录制直播，请使用已发布的视频链接。")
     if logger.preview:
         raise VideoError("当前账号只能访问试看片段，无法作为完整视频下载。请使用有权访问全片的账号登录后重试。")
     formats = _yt_ui_formats(raw)
@@ -488,6 +488,7 @@ def _inspect_ytdlp(url, cookies, log, cancel):
         "url": raw.get("webpage_url") or url, "duration": _number(raw.get("duration")),
         "formats": formats, "_engine": "yt-dlp", "_source_url": url,
         "_video_id": raw.get("id"),
+        "thumbnail":raw.get('thumbnail',''),
     }
 
 
