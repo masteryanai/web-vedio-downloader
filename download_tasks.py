@@ -9,6 +9,7 @@ import time
 import uuid
 import copy
 import math
+import threading
 from runtime import app_data_dir
 
 
@@ -24,11 +25,34 @@ def task_file(task_id):
     return directory() / (task_id + '.json')
 
 
+# Windows readers do not share delete access with os.replace. Keep local reads
+# and checkpoint publication mutually exclusive; the task lock still controls
+# download ownership independently across processes.
+_io_lock = threading.RLock()
+
+
+def write_checkpoint(target, task):
+    temporary = target.with_name(target.stem + '.' + uuid.uuid4().hex + '.tmp')
+    with _io_lock:
+        try:
+            temporary.write_text(json.dumps(task, ensure_ascii=False, indent=2), encoding='utf-8')
+            delays = (.01, .02, .04, .08)
+            for attempt in range(len(delays) + 1):
+                try:
+                    temporary.replace(target)
+                    break
+                except PermissionError as error:
+                    # Another process or scanner may briefly hold a reader. Never
+                    # retry unrelated errors or report a failed publication as saved.
+                    if os.name != 'nt' or getattr(error, 'winerror', None) not in (5, 32, 33) or attempt == len(delays):
+                        raise
+                    time.sleep(delays[attempt])
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 def save(task):
-    target = task_file(task['id'])
-    temporary = target.with_suffix('.tmp')
-    temporary.write_text(json.dumps(task, ensure_ascii=False, indent=2), encoding='utf-8')
-    temporary.replace(target)
+    write_checkpoint(task_file(task['id']), task)
 
 
 TERMINAL = {'completed', 'cancelled'}
@@ -43,7 +67,8 @@ def history_file(task_id):
 
 
 def read_record(path, task_id):
-    task = json.loads(path.read_text(encoding='utf-8'))
+    with _io_lock:
+        task = json.loads(path.read_text(encoding='utf-8'))
     fields = ('id', 'url', 'site', 'title', 'format_id', 'output', 'state')
     if not isinstance(task, dict) or any(not isinstance(task.get(key), str) for key in fields):
         raise ValueError('下载任务信息不完整。')
@@ -110,9 +135,7 @@ def archive(task):
     fields = ('id','url','site','title','format_id','format','output','state','stage',
               'created_at','finished_at','download_percent','total_bytes','downloaded_bytes','result')
     public = {key:task[key] for key in fields if key in task}
-    target = history_file(task['id']); temporary = target.with_suffix('.tmp')
-    temporary.write_text(json.dumps(public,ensure_ascii=False,indent=2),encoding='utf-8')
-    temporary.replace(target)
+    write_checkpoint(history_file(task['id']), public)
 
 
 def finish(task):
@@ -132,8 +155,9 @@ def delete_history(task_id, clean_cache=False):
             if published and Path(published).resolve().is_relative_to(cache.resolve()):
                 raise ValueError('成品位于缓存目录内，已停止清理；请选择仅删除记录。')
             if cache.exists():shutil.rmtree(cache)
-        history_file(task_id).unlink(missing_ok=True)
-        task_file(task_id).unlink(missing_ok=True)
+        with _io_lock:
+            history_file(task_id).unlink(missing_ok=True)
+            task_file(task_id).unlink(missing_ok=True)
 
 
 def create(info, format_id, output):
@@ -186,7 +210,8 @@ def remove(task):
     path = work_path(task)
     if path.exists():
         shutil.rmtree(path)
-    task_file(task['id']).unlink(missing_ok=True)
+    with _io_lock:
+        task_file(task['id']).unlink(missing_ok=True)
 
 
 def discard(task_id):
@@ -202,5 +227,6 @@ def discard(task_id):
         task.pop('result',None)
         save(task)
         archive(task)
-        task_file(task_id).unlink(missing_ok=True)
+        with _io_lock:
+            task_file(task_id).unlink(missing_ok=True)
         return task
