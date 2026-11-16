@@ -4,7 +4,7 @@ from PySide6.QtGui import QFontMetrics, QColor, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,QTabBar,
     QTableWidget,QTableWidgetItem,QHeaderView,QAbstractItemView,QProgressBar,
     QPushButton,QMessageBox,QStyledItemDelegate,QWidget,QRadioButton,QDialogButtonBox,QStyle,QStyleOptionButton)
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from transfer_stats import row_speed,speed_text
 import download_tasks as tasks
 
@@ -35,6 +35,18 @@ def group_of(task):
 def matches(task,group,query):
     return (not group or group_of(task)==group) and query.strip().casefold() in ' '.join(
         str(task.get(key,'')) for key in ('title','site','output')).casefold()
+
+
+def row_details(task):
+    details=[task.get('site','')]
+    height=task.get('format',{}).get('height')
+    if isinstance(height,(int,float)) and height>0:details.append(f'{height:g}p')
+    size=task.get('total_bytes')
+    if isinstance(size,(int,float)) and size>0:
+        details.append(f'{size/1024**3:.1f} GB' if size>=1024**3 else f'{size/1024**2:.1f} MB')
+    output=task.get('output','')
+    if output:details.append(PureWindowsPath(output).name or output)
+    return '  ·  '.join(value for value in details if value)
 
 
 class ElidingDelegate(QStyledItemDelegate):
@@ -84,7 +96,10 @@ class DownloadRowDelegate(ElidingDelegate):
             self.covers[source]=QPixmap(source) if source and Path(source).is_file() else QPixmap()
         pixmap=self.covers[source]
         if not pixmap.isNull():
-            painter.drawPixmap(cover,pixmap.scaled(cover.size(),Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation))
+            scaled=pixmap.scaled(cover.size(),Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation)
+            painter.save();painter.setClipRect(cover,Qt.ClipOperation.IntersectClip)
+            painter.drawPixmap(cover.x()+(cover.width()-scaled.width())//2,cover.y()+(cover.height()-scaled.height())//2,scaled)
+            painter.restore()
         else:
             painter.setPen(QColor('#66c0f4'));font=painter.font();font.setPointSize(23);painter.setFont(font)
             painter.drawText(cover,Qt.AlignmentFlag.AlignCenter,'▶')
@@ -92,7 +107,7 @@ class DownloadRowDelegate(ElidingDelegate):
         font=option.font;font.setPointSize(11);painter.setFont(font);painter.setPen(QColor('#f1f3f5'))
         painter.drawText(QRect(left,rect.y()+16,width,25),Qt.AlignmentFlag.AlignVCenter,painter.fontMetrics().elidedText(index.data(),Qt.TextElideMode.ElideRight,width))
         font.setPointSize(9);painter.setFont(font);painter.setPen(QColor('#a5b4c4'))
-        detail=f"{task.get('site','')}  ·  {task.get('output','')}"
+        detail=row_details(task)
         painter.drawText(QRect(left,rect.y()+43,width,19),Qt.AlignmentFlag.AlignVCenter,painter.fontMetrics().elidedText(detail,Qt.TextElideMode.ElideRight,width))
         state=dialog.table.item(index.row(),3).text();speed=dialog.table.item(index.row(),5).text()
         percent=task.get('download_percent');completed=task['state']=='completed'
@@ -104,6 +119,11 @@ class DownloadRowDelegate(ElidingDelegate):
             progress=QRect(left,rect.y()+91,width,3);painter.fillRect(progress,QColor('#1b2028'))
             painter.fillRect(QRect(progress.x(),progress.y(),int(progress.width()*max(0,min(100,percent or 0))/100),3),QColor('#1a9fff'))
         painter.restore()
+
+
+class RowBackgroundDelegate(QStyledItemDelegate):
+    def paint(self,painter,option,index):
+        painter.fillRect(option.rect,QColor('#3e4652' if option.state & QStyle.StateFlag.State_Selected else '#2b3038'))
 
 
 class DeleteDialog(QDialog):
@@ -131,7 +151,8 @@ class TaskDialog(QDialog):
         self.setWindowTitle('下载任务');self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         layout=QVBoxLayout(self)
         self.summary=QLabel();self.summary.setWordWrap(True);layout.addWidget(self.summary)
-        self.tabs=QTabBar();self.tabs.setExpanding(False)
+        self.tabs=QTabBar();self.tabs.setExpanding(False);self.tabs.setAutoFillBackground(False)
+        self.tabs.setStyleSheet('QTabBar{background:transparent;}')
         for group,name in TABS:
             index=self.tabs.addTab(name);self.tabs.setTabData(index,group)
         layout.addWidget(self.tabs)
@@ -148,12 +169,13 @@ class TaskDialog(QDialog):
         table.setItemDelegateForColumn(0,DownloadRowDelegate(table,self))
         table.setItemDelegateForColumn(3,ElidingDelegate(table))
         table.setItemDelegateForColumn(5,ElidingDelegate(table))
+        table.setItemDelegateForColumn(6,RowBackgroundDelegate(table))
         table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         table.verticalHeader().setDefaultSectionSize(108)
         table.verticalHeader().hide();table.horizontalHeader().hide();table.setShowGrid(False)
         for column in (1,2,3,4,5):table.setColumnHidden(column,True)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        table.setStyleSheet('QTableWidget{background:#2b3038;border:0;} QTableWidget::item{border:0;}')
+        table.setStyleSheet('QTableWidget{background:#2b3038;border:0;} QTableWidget::item{border:0;} QTableWidget::item:selected{background:#3e4652;}')
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -244,6 +266,8 @@ class TaskDialog(QDialog):
                     item.setToolTip(value)
                     if j==0:
                         item.setToolTip(f"{task['title']}\n{task.get('site','')} · {state}\n{task.get('output','')}")
+                        item.setData(Qt.ItemDataRole.AccessibleTextRole,task['title'])
+                        item.setData(Qt.ItemDataRole.AccessibleDescriptionRole,f'{row_details(task)}，{state}，{task.get("download_percent") or 0}%')
                         item.setData(Qt.ItemDataRole.UserRole,task['id'])
                         item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable)
                         item.setCheckState(Qt.CheckState.Checked if task['id'] in self.checked_ids else Qt.CheckState.Unchecked)
@@ -259,7 +283,9 @@ class TaskDialog(QDialog):
                 bar.setTextVisible(True)
                 action=self.table.cellWidget(i,6)
                 if action is None:
-                    action=QWidget();box=QVBoxLayout(action);box.setContentsMargins(8,20,12,20)
+                    self.table.setItem(i,6,QTableWidgetItem())
+                    action=QWidget();action.setAutoFillBackground(False);action.setStyleSheet('QWidget{background:transparent;}')
+                    box=QVBoxLayout(action);box.setContentsMargins(8,20,12,20)
                     button=QPushButton();box.addWidget(button);self.table.setCellWidget(i,6,action)
                 else:button=action.findChild(QPushButton)
                 if getattr(button,'task_connected',False):button.clicked.disconnect()
