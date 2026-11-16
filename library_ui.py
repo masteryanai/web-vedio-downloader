@@ -7,7 +7,7 @@ import re
 import subprocess
 import threading
 import time
-from PySide6.QtCore import Qt,QObject,QThread,Signal,Slot,QTimer,QSize,QUrl
+from PySide6.QtCore import Qt,QObject,QThread,Signal,Slot,QTimer,QSize,QUrl,QEvent
 from PySide6.QtGui import QIcon,QPixmap,QPainter,QColor,QPainterPath,QFont,QDesktopServices,QLinearGradient,QFontMetrics
 from PySide6.QtWidgets import (QWidget,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QLineEdit,QComboBox,
     QTableWidget,QTableWidgetItem,QHeaderView,QListWidget,QListWidgetItem,QListView,QStackedWidget,
@@ -118,7 +118,7 @@ class StorageDialog(QDialog):
         super().__init__(workspace.window);self.ws=workspace;self.setWindowTitle('存储库与外部播放器');self.resize(730,500)
         from steam_dialogs import DialogPages,dark_titlebar
         from storage_presentation import StorageBar
-        dark_titlebar(self);self._generation=0;self._cancel=threading.Event();self._rows={}
+        dark_titlebar(self);self._generation=0;self._cancel=threading.Event();self._rows={};self._capacity_lock=threading.Lock();self._capacity_pending=None;self._capacity_running=False;self._capacity_closed=False
         self.capacity_ready.connect(self.show_capacity)
         self.resize(940,690)
         outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,0)
@@ -156,7 +156,7 @@ class StorageDialog(QDialog):
         index=max(0,self.disks.findData(selected));self.disks.setCurrentIndex(index);self.list.setCurrentRow(index)
         self.list.blockSignals(False);self.disks.blockSignals(False);self.select_storage()
     def select_storage(self,*_):
-        from storage_presentation import StorageRow,storage_snapshot
+        from storage_presentation import StorageRow
         self._cancel.set();self._cancel=threading.Event();self._generation+=1;generation=self._generation;cancel=self._cancel
         self.list.blockSignals(True);self.list.setCurrentRow(self.disks.currentIndex());self.list.blockSignals(False)
         data=self.ws.store.read();lib=next((v for v in data['libraries'] if v['id']==self.disks.currentData()),None)
@@ -173,14 +173,29 @@ class StorageDialog(QDialog):
             item.setSizeHint(QSize(0,106));self.entries.addItem(item)
             row=StorageRow(work,thumbnail({**work,'banner':work.get('banner') or work.get('cover')},106,68,banner=True),len(episodes));self.entries.setItemWidget(item,row);self._rows[work['id']]=row
         if not works:self.entries.addItem('此存储库暂无季条目。新增下载或导入后将在这里显示。')
-        def read():
-            result=storage_snapshot(lib['path'],works,data['episodes'],cancel)
-            if result is not None and not cancel.is_set():
-                try:self.capacity_ready.emit(generation,result)
-                except RuntimeError:pass # The native dialog may already have been deleted.
-        threading.Thread(target=read,daemon=True,name='storage-metadata').start()
+        with self._capacity_lock:
+            if self._capacity_closed:return
+            self._capacity_pending=(generation,lib['path'],works,data['episodes'],cancel)
+            if self._capacity_running:return
+            self._capacity_running=True
+        threading.Thread(target=self._read_capacity,daemon=True,name='storage-metadata').start()
+    def _read_capacity(self):
+        from storage_presentation import storage_snapshot
+        while True:
+            with self._capacity_lock:
+                request=self._capacity_pending;self._capacity_pending=None
+                if self._capacity_closed or request is None:
+                    self._capacity_running=False;return
+            generation,path,works,episodes,cancel=request
+            try:
+                result=None if cancel.is_set() else storage_snapshot(path,works,episodes,cancel)
+                if result is not None and not cancel.is_set():
+                    try:self.capacity_ready.emit(generation,result)
+                    except RuntimeError:pass # Native dialog may already have been deleted.
+            except Exception as error:
+                diagnostics.exception('storage.metadata.failed',error,error.__traceback__)
     def show_capacity(self,generation,result):
-        if generation!=self._generation:return
+        if self._capacity_closed or generation!=self._generation:return
         from storage_presentation import byte_text
         for key,value in result['rows'].items():
             if key in self._rows:self._rows[key].set_measurement(value)
@@ -197,7 +212,12 @@ class StorageDialog(QDialog):
         if unknown:note+=f' {unknown} 个文件不可用，其大小未计入。'
         self.legend.setToolTip(note);self.path_label.setToolTip(note)
     def done(self,result):
-        self._cancel.set();super().done(result)
+        self._stop_capacity();super().done(result)
+    def closeEvent(self,event):
+        self._stop_capacity();super().closeEvent(event)
+    def _stop_capacity(self):
+        with self._capacity_lock:
+            self._capacity_closed=True;self._capacity_pending=None;self._cancel.set()
     def add(self):
         path=QFileDialog.getExistingDirectory(self,'选择专用影片目录',options=QFileDialog.Option.DontUseNativeDialog)
         if path:
@@ -411,7 +431,8 @@ class Workspace(QObject):
         super().__init__(window);self.window=window;self.store=Catalogue();self.jobs=Jobs(window);self.states={};self.current=None;self.fingerprint=None;self.cover_pending=set();self.check_pending=set();self.state_pending=False;self.last_scan=0
         self.import_dialog=None;self.total_samples=0;self.closed=False;self.check_retry={};self.episode_page=0;self.episode_checked=set();self.refresh_pending=False;self.batch_preparing=False;self.batch_worker=False;self.batch_generation=0;self.prepared_batch=deque();self.task_artwork={};self.side_group_state={}
         self.add_dialog=QDialog(window);self.add_dialog.setWindowTitle('添加影片 · 解析与入库');self.add_dialog.resize(1020,850)
-        self.add_dialog.setMinimumSize(780,600);layout=QVBoxLayout(self.add_dialog);scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(legacy_content);layout.addWidget(scroll)
+        self.add_dialog.setMinimumSize(780,600);layout=QVBoxLayout(self.add_dialog);scroll=QScrollArea();scroll.setWidgetResizable(True);legacy_content.setObjectName('addFilmContent');scroll.viewport().setObjectName('addFilmViewport');scroll.setWidget(legacy_content);layout.addWidget(scroll)
+        self.add_dialog.setStyleSheet("QWidget#addFilmContent,QWidget#addFilmViewport {background:#1b2838;color:#d6d7d8;}")
         self.add_controls=AddControls(self);legacy_content.layout().insertWidget(2,self.add_controls)
         window.download_button.setText('加入库并下载');window.path_button.hide();window.output_path.hide()
         self.add_dialog.finished.connect(self.add_closed)
@@ -504,8 +525,15 @@ class Workspace(QObject):
         window.setMinimumSize(min(950,width),min(700,height));window.resize(min(1400,width),min(900,height))
         self.timer=QTimer(self);self.timer.setInterval(1000);self.timer.timeout.connect(self.tick);self.timer.start()
         window.queue.completed.connect(self.schedule_refresh);window.queue.changed.connect(self.schedule_refresh)
+        self.window.installEventFilter(self);self.update_responsive_layout()
         self.refresh(True)
 
+    def eventFilter(self,obj,event):
+        if obj is self.window and event.type()==QEvent.Type.Resize:self.update_responsive_layout()
+        return super().eventFilter(obj,event)
+    def update_responsive_layout(self):
+        self.banner.setFixedHeight(max(155,min(290,int(self.window.height()*.31))))
+        self.episodes.setColumnHidden(2,self.window.width()<1100)
     def active_ids(self):return set(self.window.queue.active)|{v[0] for v in self.window.queue.waiting}
     def schedule_refresh(self,*_):
         if self.closed or self.refresh_pending:return

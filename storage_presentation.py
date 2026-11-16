@@ -16,9 +16,11 @@ def byte_text(value):
 
 def storage_snapshot(root,works,episodes,cancel):
     """Read registered files, never enumerate any directory or mount."""
+    if cancel.is_set():return None
     root=Path(root)
     try:disk=shutil.disk_usage(root)
     except OSError:disk=None
+    if cancel.is_set():return None
     measured={};rows={};owned={}
     for work in works:
         files={os.path.normcase(f['path']):f for e in episodes if e['work_id']==work['id'] for f in e.get('files',[])}

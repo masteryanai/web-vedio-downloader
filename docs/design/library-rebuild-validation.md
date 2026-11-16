@@ -43,3 +43,13 @@
 新增持久化测试先得到 2 failure + 1 error：应用内读写重叠、外部读者短暂持有、永久拒绝时 tmp 未清理。修复后同进程 read_record/save/archive 使用 RLock；每次独立 UUID 临时文件；仅 Windows PermissionError 5/32/33 允许总 150ms 的有界退避，永久错误继续上抛，finally 清理临时文件。删除检查点也与进程内读取互斥，任务所有权锁保持原义。
 
 补充同任务 6 线程各 10 次并发保存，确认最终 JSON 完整且无临时文件残留。相关 49 项任务、历史、恢复、队列、媒体库、批量、Qt worker/UI 测试通过（17.101s）。独立 large 压力连续 20 轮通过，之后按负责人要求停止继续扩大重复次数；此前第 2 轮的失败证据已报告给负责人。未更改验收超时或放宽成功断言。
+
+## 审查修复：添加页底色、响应式职责和存储查询
+
+添加页 legacy 内容与滚动 viewport 具有独立对象名和深色背景；真实 Qt 窗口截图 `scratch/review-fix-100/populated/add.png` 与 `scratch/review-fix-150/populated/add.png` 已人工查看，白色标题在两种缩放下均清晰。该目录还保留库、详情、下载、小窗口、存储及设置截图。
+
+响应式 hero 高度与选集路径列隐藏由 Workspace 自己的 resize event filter 维护，EdgeResize 只负责窗口边缘操作，保留原高度边界和 1100px 路径列阈值。
+
+存储查询每个弹窗最多一个后台线程，运行中的系统调用无法打断时后续请求只保留最新一个；查询前后检查取消，旧 generation 与关闭后的结果不能更新界面。关闭不等待磁盘调用，后台线程不会阻塞退出。仍只读取已登记文件，不扫描目录。
+
+新增 subprocess Qt widget 行为回归，覆盖取消前不碰磁盘、慢查询期间连续切换跳过中间存储库、单 worker、旧 token 不回写以及 close 后待查丢弃和结果不回写。`test_storage*.py` 3 项通过，`test_library_ui.py` 3 项通过；真实窗口截图使用主仓虚拟环境在本机执行，因验证目标是 Windows Qt 客户端。
