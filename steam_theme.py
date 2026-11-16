@@ -8,8 +8,10 @@ QLabel#videoTitle,QLabel#sectionTitle {font-size:16px;font-weight:600;color:#e5e
 QLabel#muted,QLabel#sideMuted {color:#8f98a0;} QLabel#metrics {font-size:24px;color:#41c5f4;font-weight:700;}
 QLabel#stateBadge {color:#85d5ee;background:#263e51;padding:6px;}
 QPushButton {background:#353b45;color:#dce9f5;border:1px solid #414853;border-radius:3px;padding:5px 12px;min-height:18px;}
+QLineEdit:focus,QPlainTextEdit:focus,QComboBox:focus {border-color:#66c0f4;}
+QPushButton:focus {border-color:#66c0f4;}
 QPushButton:hover {background:#46505e;color:white;} QPushButton:pressed {background:#24384a;}
-QPushButton#primary {background:#1a9fff;color:white;border-color:#1a9fff;font-weight:600;}
+QPushButton#primary {background:#0878c0;color:white;border-color:#0878c0;font-weight:600;}
 QPushButton#nav {background:transparent;border:0;font-size:21px;font-weight:600;}
 QPushButton#sideButton {text-align:left;background:transparent;border:0;color:#b8bcbf;}
 QPushButton:disabled {color:#61778b;background:#24313e;border-color:#293b4b;}

@@ -467,7 +467,7 @@ class Workspace(QObject):
             QPushButton#steamNavActive {border:0;border-bottom:2px solid #1a9fff;background:transparent;font-size:19px;padding:0 5px;color:#1a9fff;}
             QPushButton#steamNav:focus,QPushButton#steamNavActive:focus,QPushButton#windowControl:focus,QPushButton#chromeMenu:focus {background:#354554;}
             QLabel#shelfHeading {color:#d5d8dd;font-size:15px;}
-            QPushButton#playAction {background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #75b022,stop:1 #219e45);border:0;color:white;font-size:20px;padding:8px 30px;}
+            QPushButton#playAction {background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #5b8c18,stop:1 #219e45);border:0;color:white;font-size:20px;font-weight:600;padding:8px 30px;}
             QFrame#actionStrip {background:#252c35;border-bottom:1px solid #444c58;}
         """)
         top=QHBoxLayout();top.setContentsMargins(12,1,18,20);top.setSpacing(14)

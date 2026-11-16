@@ -294,7 +294,7 @@ class TaskDialog(QDialog):
                 if completed:
                     button.setText('▶  打开文件');button.setEnabled(bool(task.get('result',{}).get('path')))
                     button.clicked.connect(lambda checked=False,key=task_id:self.open_result(key))
-                    button.setStyleSheet('QPushButton{background:#5c9e24;color:white;border:0;padding:10px;} QPushButton:hover{background:#79bc31;}')
+                    button.setStyleSheet('QPushButton{background:#388620;color:white;border:0;padding:10px;} QPushButton:hover{background:#337a1e;}')
                 else:
                     active=self.eligible(task,'pause');button.setText('Ⅱ  暂停' if active else '↓  继续')
                     button.setEnabled(self.eligible(task,'pause' if active else 'resume'))
