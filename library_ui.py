@@ -103,9 +103,13 @@ def thumbnail(work,width=190,height=235,banner=False):
 
 
 class StorageDialog(QDialog):
+    capacity_ready=Signal(int,object)
     def __init__(self,workspace):
         super().__init__(workspace.window);self.ws=workspace;self.setWindowTitle('存储库与外部播放器');self.resize(730,500)
-        from steam_dialogs import DialogPages
+        from steam_dialogs import DialogPages,dark_titlebar
+        from storage_presentation import StorageBar
+        dark_titlebar(self);self._generation=0;self._cancel=threading.Event();self._rows={}
+        self.capacity_ready.connect(self.show_capacity)
         self.resize(940,690)
         outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,0)
         self.sections=DialogPages('应用设置');outer.addWidget(self.sections)
@@ -113,11 +117,13 @@ class StorageDialog(QDialog):
         self.disks=QComboBox();self.disks.setObjectName('diskSelector');layout.addWidget(self.disks)
         self.path_label=QLabel();self.path_label.setObjectName('muted');self.path_label.setWordWrap(True);layout.addWidget(self.path_label)
         self.capacity=QLabel();layout.addWidget(self.capacity)
-        self.usage=QProgressBar();self.usage.setFixedHeight(9);self.usage.setTextVisible(False);self.usage.setRange(0,1000);layout.addWidget(self.usage)
-        self.legend=QLabel('磁盘已用 / 可用（包含其他文件）');self.legend.setObjectName('muted');layout.addWidget(self.legend)
-        self.entries_heading=QLabel();self.entries_heading.setObjectName('sectionTitle');layout.addWidget(self.entries_heading)
-        self.entries=QListWidget();self.entries.setMinimumHeight(150);layout.addWidget(self.entries,1)
-        self.list=QListWidget();self.list.setMaximumHeight(96);layout.addWidget(self.list)
+        self.usage=StorageBar();layout.addWidget(self.usage)
+        self.legend=QLabel();self.legend.setObjectName('muted');self.legend.setWordWrap(True);layout.addWidget(self.legend)
+        semantics=QLabel('本库仅统计此目录内已登记文件的逻辑大小，外部引用不计入；与实际磁盘分配可能不同。');semantics.setObjectName('storageSemantics');semantics.setWordWrap(True);layout.addWidget(semantics)
+        heading=QHBoxLayout();self.entries_heading=QLabel();self.entries_heading.setObjectName('sectionTitle');heading.addWidget(self.entries_heading)
+        rule=QFrame();rule.setFrameShape(QFrame.Shape.HLine);rule.setObjectName('storageRule');heading.addWidget(rule,1);layout.addLayout(heading)
+        self.entries=QListWidget();self.entries.setObjectName('storageEntries');self.entries.setSpacing(2);self.entries.setMinimumHeight(220);self.entries.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);layout.addWidget(self.entries,1)
+        self.list=QListWidget();self.list.hide()
         row=QHBoxLayout();layout.addLayout(row)
         for title,fn in [('添加存储库',self.add),('移除存储库记录',self.remove)]:
             button=QPushButton(title);button.clicked.connect(fn);row.addWidget(button)
@@ -140,26 +146,48 @@ class StorageDialog(QDialog):
         index=max(0,self.disks.findData(selected));self.disks.setCurrentIndex(index);self.list.setCurrentRow(index)
         self.list.blockSignals(False);self.disks.blockSignals(False);self.select_storage()
     def select_storage(self,*_):
-        import shutil
+        from storage_presentation import StorageRow,storage_snapshot
+        self._cancel.set();self._cancel=threading.Event();self._generation+=1;generation=self._generation;cancel=self._cancel
         self.list.blockSignals(True);self.list.setCurrentRow(self.disks.currentIndex());self.list.blockSignals(False)
         data=self.ws.store.read();lib=next((v for v in data['libraries'] if v['id']==self.disks.currentData()),None)
-        self.entries.clear()
+        self.entries.clear();self._rows={};self.usage.set_usage()
         if not lib:
-            self.path_label.setText('添加专用影片目录以查看存储空间');self.capacity.setText('暂无存储库');self.usage.setValue(0);self.entries_heading.setText('项目 0');return
-        self.path_label.setText(lib['path'])
-        def size(value):return f'{value/1024**3:.1f} GiB'
-        try:
-            disk=shutil.disk_usage(lib['path']);self.capacity.setText(f'{size(disk.total)} 中共有 {size(disk.free)} 可用');self.usage.setValue(round(disk.used/max(1,disk.total)*1000))
-        except OSError:self.capacity.setText('存储库离线 · 无法读取磁盘空间');self.usage.setValue(0)
+            self.path_label.setText('添加专用影片目录以查看存储空间');self.capacity.setText('暂无存储库');self.legend.clear();self.entries_heading.setText('项目 0');return
+        self.path_label.setText(lib['path']);self.capacity.setText('读取中 · 正在读取磁盘与已登记文件');self.legend.setText('只读取登记文件大小，不扫描目录。')
         works=[w for w in data['works'] if w.get('library_id')==lib['id']]
         self.entries_heading.setText(f'项目 {len(works)}')
         for work in works:
             episodes=[e for e in data['episodes'] if e['work_id']==work['id']]
-            files=[f for e in episodes for f in e.get('files',[])]
             sites=' / '.join(dict.fromkeys(v.get('site','未知来源') for v in work.get('sources',[]))) or '外部导入'
-            external=sum(bool(f.get('external')) for f in files)
-            self.entries.addItem(work['title']+'  '+work.get('season','')+'\n'+sites+f' · {len(episodes)} 个选集 · {len(files)} 个已登记文件'+(f'（外部 {external}）' if external else ''))
+            item=QListWidgetItem(work['title']+' '+work.get('season','')+' '+sites)
+            item.setSizeHint(QSize(0,106));self.entries.addItem(item)
+            row=StorageRow(work,thumbnail({**work,'banner':work.get('banner') or work.get('cover')},106,68,banner=True),len(episodes));self.entries.setItemWidget(item,row);self._rows[work['id']]=row
         if not works:self.entries.addItem('此存储库暂无季条目。新增下载或导入后将在这里显示。')
+        def read():
+            result=storage_snapshot(lib['path'],works,data['episodes'],cancel)
+            if result is not None and not cancel.is_set():
+                try:self.capacity_ready.emit(generation,result)
+                except RuntimeError:pass # The native dialog may already have been deleted.
+        threading.Thread(target=read,daemon=True,name='storage-metadata').start()
+    def show_capacity(self,generation,result):
+        if generation!=self._generation:return
+        from storage_presentation import byte_text
+        for key,value in result['rows'].items():
+            if key in self._rows:self._rows[key].set_measurement(value)
+        disk=result['disk'];unknown=sum(v['unknown'] for v in result['rows'].values())
+        if disk:
+            self.capacity.setText(f'{byte_text(disk.total)} 中共有 {byte_text(disk.free)} 可用')
+            self.usage.set_usage(disk.total,disk.used,result['owned'])
+            other=max(0,disk.used-result['owned'])
+            self.legend.setText(f'<span style="color:#1a9fff">●</span> 本库登记 {byte_text(result["owned"])}　'
+                f'<span style="color:#a99ae9">●</span> 其他 / 未归类约 {byte_text(other)}　'
+                f'<span style="color:#74808e">●</span> 可用 {byte_text(disk.free)}')
+        else:self.capacity.setText('存储库离线 · 无法读取磁盘空间');self.legend.setText('磁盘容量未知；已登记文件仍保留在影片库。')
+        note='本库仅含此目录内已登记且可读取的存储文件；外部引用归入其他。大小按逻辑字节统计，可能与磁盘实际分配不同。'
+        if unknown:note+=f' {unknown} 个文件不可用，其大小未计入。'
+        self.legend.setToolTip(note);self.path_label.setToolTip(note)
+    def done(self,result):
+        self._cancel.set();super().done(result)
     def add(self):
         path=QFileDialog.getExistingDirectory(self,'选择专用影片目录',options=QFileDialog.Option.DontUseNativeDialog)
         if path:

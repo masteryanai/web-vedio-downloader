@@ -38,7 +38,8 @@ class CloseChoice(QDialog):
 class SettingsDialog(QDialog):
     def __init__(self,desktop):
         super().__init__(desktop.window);self.desktop=desktop;self.setWindowTitle('设置');self.resize(850,640)
-        from steam_dialogs import DialogPages
+        from steam_dialogs import DialogPages,dark_titlebar
+        dark_titlebar(self)
         cfg=preferences.load();outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,16)
         self.sections=DialogPages('应用设置');outer.addWidget(self.sections)
         layout=self.sections.page('下载')

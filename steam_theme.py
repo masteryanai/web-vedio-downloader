@@ -42,4 +42,11 @@ QScrollBar:horizontal {background:#202329;height:9px;}
 QScrollBar::handle:horizontal {background:#59616d;min-width:25px;}
 QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal {width:0;}
 QAbstractItemView::item {padding:6px;}
+QListWidget#storageEntries {background:transparent;outline:0;}
+QListWidget#storageEntries::item {padding:0;border:0;}
+QFrame#storageRow {background:#20262e;border:0;}
+QLabel#storageTitle {font-size:14px;font-weight:600;color:#f0f2f5;}
+QLabel#storageSize {font-size:14px;font-weight:600;color:#f0f2f5;}
+QLabel#storageSemantics {font-size:11px;color:#8f98a0;}
+QFrame#storageRule {color:#343b45;background:#343b45;max-height:1px;border:0;}
 '''

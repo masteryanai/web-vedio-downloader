@@ -1,6 +1,7 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,29 @@ from media_library import Catalogue
 from library_ui import StorageDialog
 
 class StoragePresentation(unittest.TestCase):
+    def wait_for_capacity(self,app,dialog):
+        deadline=time.monotonic()+5
+        while '读取中' in dialog.capacity.text() and time.monotonic()<deadline:
+            app.processEvents();time.sleep(.01)
+
+    def test_registered_file_sizes_are_shown_without_scanning_unregistered_files(self):
+        app=QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,WVD_DATA_DIR=folder):
+            store=Catalogue();root=Path(folder)/'media';lib=store.library(str(root),'影片目录')
+            _,episodes=store.ingest({'site':'测试来源','key':'123','url':'https://example.com/123','title':'作品','entries':[{'key':'1','title':'第一集','url':'https://example.com/1'}]},'作品','第一季',lib)
+            media=root/'one.mp4';media.write_bytes(b'x'*4096);store.attach(episodes[0],media)
+            (root/'not-registered.mp4').write_bytes(b'x'*8192)
+            dialog=StorageDialog(SimpleNamespace(window=QWidget(),store=store));self.wait_for_capacity(app,dialog)
+            row=dialog.entries.itemWidget(dialog.entries.item(0))
+            self.assertEqual(row.size_label.text(),'4.0 KiB')
+            self.assertIn('4.0 KiB',dialog.legend.text())
+            self.assertIn('本库',dialog.legend.text())
+            media.unlink();dialog.reload();self.wait_for_capacity(app,dialog)
+            row=dialog.entries.itemWidget(dialog.entries.item(0))
+            self.assertEqual(row.size_label.text(),'未知 / 离线')
+            self.assertIn('1 个文件不可用',dialog.legend.toolTip())
+            dialog.close()
+
     def test_selected_storage_shows_capacity_and_registered_titles(self):
         app=QApplication.instance() or QApplication([])
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,WVD_DATA_DIR=folder):
@@ -18,6 +42,7 @@ class StoragePresentation(unittest.TestCase):
             second=store.library(str(Path(folder)/'other'),'第二存储库')
             store.ingest({'site':'测试来源','key':'123','url':'https://example.com/123','title':'作品','entries':[{'key':'1','title':'第一集','url':'https://example.com/1'}]},'作品','第一季',second)
             dialog=StorageDialog(SimpleNamespace(window=QWidget(),store=store))
+            self.wait_for_capacity(app,dialog)
             self.assertIn('可用',dialog.capacity.text())
             self.assertIn('0',dialog.entries_heading.text())
             self.assertEqual(dialog.disks.count(),2)
