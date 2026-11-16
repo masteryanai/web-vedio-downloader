@@ -63,7 +63,14 @@ class Trend(QWidget):
     def add(self,value):self.values.append(max(0,value));self.update()
     def paintEvent(self,event):
         painter=QPainter(self);painter.setRenderHint(QPainter.RenderHint.Antialiasing);background=QLinearGradient(0,0,0,self.height());background.setColorAt(0,QColor('#223c55'));background.setColorAt(1,QColor('#18232e'));painter.fillRect(self.rect(),background)
-        if len(self.values)<2:return
+        painter.setPen(QColor('#31485b'))
+        for i in range(1,5):
+            y=28+(self.height()-40)*i/4;painter.drawLine(0,int(y),self.width(),int(y))
+        painter.setPen(QColor('#88a6bd'));painter.drawText(14,21,'网络使用情况');painter.drawText(self.width()-108,21,'过去 120 秒')
+        def speed(value):return f'{value/1048576:.1f} MB/s' if value>=1048576 else f'{value/1024:.1f} KB/s' if value>=1024 else f'{value:.0f} B/s'
+        painter.drawText(14,45,'当前 '+speed(self.values[-1] if self.values else 0)+'    峰值 '+speed(max(self.values) if self.values else 0))
+        if len(self.values)<2:
+            painter.setPen(QColor('#258ac4'));painter.drawLine(0,self.height()-8,self.width(),self.height()-8);return
         path=QPainterPath();height=max(self.values) or 1
         for i,value in enumerate(self.values):
             x=i*self.width()/119;y=self.height()-8-value/height*(self.height()-20)
@@ -374,7 +381,7 @@ class ImportDialog(QDialog):
 class Workspace(QObject):
     def __init__(self,window,legacy_content,old_shell):
         super().__init__(window);self.window=window;self.store=Catalogue();self.jobs=Jobs(window);self.states={};self.current=None;self.fingerprint=None;self.cover_pending=set();self.check_pending=set();self.state_pending=False;self.last_scan=0
-        self.import_dialog=None;self.total_samples=0;self.closed=False;self.check_retry={};self.episode_page=0;self.episode_checked=set();self.refresh_pending=False;self.batch_preparing=False;self.batch_worker=False;self.batch_generation=0;self.prepared_batch=deque()
+        self.import_dialog=None;self.total_samples=0;self.closed=False;self.check_retry={};self.episode_page=0;self.episode_checked=set();self.refresh_pending=False;self.batch_preparing=False;self.batch_worker=False;self.batch_generation=0;self.prepared_batch=deque();self.task_artwork={};self.side_group_state={}
         self.add_dialog=QDialog(window);self.add_dialog.setWindowTitle('添加影片 · 解析与入库');self.add_dialog.resize(1020,850)
         self.add_dialog.setMinimumSize(780,600);layout=QVBoxLayout(self.add_dialog);scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(legacy_content);layout.addWidget(scroll)
         self.add_controls=AddControls(self);legacy_content.layout().insertWidget(2,self.add_controls)
@@ -399,7 +406,7 @@ class Workspace(QObject):
             QTreeWidget#sideCatalogue::item:hover {background:#353d48;}
             QWidget#libraryHome,QWidget#seasonDetails,QListWidget#covers {background:#2b3038;}
             QListWidget#covers {outline:0;border:0;}
-            QScrollBar:horizontal {background:#2b3038;height:6px;} QScrollBar::handle:horizontal {background:#535c68;min-width:40px;} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal {width:0;}
+            QScrollBar:horizontal {background:#2b3038;height:6px;} QScrollBar::handle:horizontal {background:#535c68;min-width:40px;} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal {width:0;} QScrollBar::add-page:horizontal,QScrollBar::sub-page:horizontal {background:#2b3038;}
             QTableWidget {background:#252a32;alternate-background-color:#2a3038;} QHeaderView::section {background:#303640;color:#a5b0be;}
             QTableCornerButton::section {background:#303640;}
             QPushButton#steamNav {border:0;background:transparent;font-size:19px;padding:0 8px;color:#d7d8da;}
@@ -415,7 +422,7 @@ class Workspace(QObject):
         tools=QPushButton('管理 ▾');tools.setObjectName('steamNav');menu=QMenu(tools)
         for text,fn in [('设置',window.show_settings),('存储库与播放器',self.storage),('导入已有视频',self.import_files),('账号与扫码登录',window.show_accounts),('日志与故障反馈',window.show_diagnostics),('查看已适配列表',window.show_supported)]:menu.addAction(text,fn)
         tools.setMenu(menu);top.addWidget(tools);top.addStretch();top.addWidget(QLabel('WEB VIDEO DOWNLOADER',objectName='muted'));outer.addLayout(top)
-        central=QSplitter();central.setHandleWidth(2);sidebar=QFrame(objectName='librarySidebar');sidebar.setMinimumWidth(190);sidebar.setMaximumWidth(390);left=QVBoxLayout(sidebar);left.setContentsMargins(6,5,6,4);left.setSpacing(5)
+        central=QSplitter();self.central_splitter=central;central.setHandleWidth(2);sidebar=QFrame(objectName='librarySidebar');self.sidebar=sidebar;sidebar.setMinimumWidth(190);sidebar.setMaximumWidth(390);left=QVBoxLayout(sidebar);left.setContentsMargins(6,5,6,4);left.setSpacing(5)
         home_button=QPushButton('主页   ▦');home_button.setObjectName('sideButton');home_button.clicked.connect(self.home);left.addWidget(home_button)
         self.filter=QComboBox();self.filter.addItems(['全部影片','已下载','未下载完整','图文作品']);self.filter.currentIndexChanged.connect(self.home);left.addWidget(self.filter)
         self.search=QLineEdit();self.search.setPlaceholderText('⌕  搜索影片 / 季');self.search.textChanged.connect(self.home);left.addWidget(self.search)
@@ -458,10 +465,10 @@ class Workspace(QObject):
             b=QPushButton(title);b.clicked.connect(fn);buttons.addWidget(b)
         detail.addLayout(buttons);self.pages.addWidget(self.details)
         from task_view import TaskDialog
-        window.task_dialog=TaskDialog(window.queue,lambda key:window.resume_task(key,report_error=False),window)
+        window.task_dialog=TaskDialog(window.queue,lambda key:window.resume_task(key,report_error=False),window,cover_provider=lambda task:self.task_artwork.get(task['id'],''))
         window.task_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose,False);window.task_dialog.setWindowFlags(Qt.WindowType.Widget)
-        task_page=QWidget();tasks_layout=QVBoxLayout(task_page);tasks_layout.addWidget(QLabel('下载',objectName='title'));tasks_layout.addWidget(window.total_speed_label)
-        self.trend=Trend();self.trend.setMinimumHeight(160);self.trend.setMaximumHeight(210);tasks_layout.addWidget(self.trend);tasks_layout.addWidget(window.task_dialog,1);self.pages.addWidget(task_page)
+        task_page=QWidget();tasks_layout=QVBoxLayout(task_page);tasks_layout.setContentsMargins(20,12,20,12);window.total_speed_label.setObjectName('sectionTitle');tasks_layout.addWidget(window.total_speed_label)
+        self.trend=Trend();self.trend.setMinimumHeight(160);self.trend.setMaximumHeight(180);tasks_layout.addWidget(self.trend);tasks_layout.addWidget(window.task_dialog,1);self.pages.addWidget(task_page)
         footer=QHBoxLayout();footer.setContentsMargins(12,3,12,3);add=QPushButton('⊞  添加影片');add.setObjectName('sideButton');add.clicked.connect(self.open_add);footer.addWidget(add);footer.addStretch();self.status=QPushButton('暂无任务');self.status.setObjectName('sideButton');self.status.clicked.connect(self.show_tasks);footer.addWidget(self.status);footer.addStretch()
         floating=QPushButton('悬浮框');floating.clicked.connect(lambda:window.desktop.set_float_enabled(not window.desktop.cfg['float_enabled']));footer.addWidget(floating);outer.addLayout(footer)
         window.setCentralWidget(shell);old_shell.deleteLater()
@@ -485,6 +492,7 @@ class Workspace(QObject):
     def add_closed(self,_):
         if self.window.active_thread or self.window.browser_dialog:self.window.cancel()
     def select_navigation(self,tasks_page=False):
+        self.sidebar.setVisible(not tasks_page)
         for button,active in [(self.library_nav,not tasks_page),(self.tasks_nav,tasks_page)]:
             button.setObjectName('steamNavActive' if active else 'steamNav');button.style().unpolish(button);button.style().polish(button)
     def home(self,*_):self.current=None;self.pages.setCurrentIndex(0);self.select_navigation();self.refresh(True)
@@ -502,14 +510,25 @@ class Workspace(QObject):
             available=' / '.join(str(int(h))+'P' for h in heights) if heights else '原始流／各集解析后确认'
             self.window.video_meta.setText('首个选集可用：'+available+'。下载按上方画质策略逐集选择。')
 
+    def refresh_task_artwork(self,data):
+        from runtime import app_data_dir
+        covers={}
+        for work in data['works']:
+            value=work.get('banner') or work.get('cover') or ''
+            path=Path(value) if value else None
+            covers[work['id']]=str(path if path.is_absolute() else app_data_dir()/path) if path else ''
+        self.task_artwork={task_id:covers.get(ep['work_id'],'') for ep in data['episodes'] for task_id in ep.get('task_ids',[ep.get('task_id')]) if task_id}
+
     def refresh(self,force=False):
         if self.closed:return
         try:
-            data=self.store.read();fingerprint=(repr(data),self.search.text(),self.filter.currentIndex(),self.library_filter.currentData(),repr(self.states))
+            data=self.store.read();self.refresh_task_artwork(data);fingerprint=(repr(data),self.search.text(),self.filter.currentIndex(),self.library_filter.currentData(),repr(self.states))
             if not force and fingerprint==self.fingerprint:return
             self.fingerprint=fingerprint;selected_lib=self.library_filter.currentData();self.library_filter.blockSignals(True);self.library_filter.clear();self.library_filter.addItem('全部存储库',None)
             for lib in data['libraries']:self.library_filter.addItem(lib['label'],lib['id'])
             self.library_filter.setCurrentIndex(max(0,self.library_filter.findData(selected_lib)));self.library_filter.blockSignals(False)
+            for i in range(self.side_titles.topLevelItemCount()):
+                group=self.side_titles.topLevelItem(i);self.side_group_state[group.text(0).split(' (')[0]]=group.isExpanded()
             term=self.search.text().strip().casefold();self.tiles.clear();self.recent.clear();self.side_titles.clear();self.side_items={};shown=[];side_groups={}
             for work in sorted(data['works'],key=(lambda w:w['title'].casefold()) if self.sort.currentIndex()==1 else (lambda w:w['created_at']),reverse=self.sort.currentIndex()==0):
                 eps=[e for e in data['episodes'] if e['work_id']==work['id']];count=sum(self.states.get(e['id'])=='已下载' for e in eps)
@@ -522,7 +541,7 @@ class Workspace(QObject):
                 item=QListWidgetItem(QIcon(thumbnail(work)),text);item.setData(Qt.ItemDataRole.UserRole,work['id']);item.setSizeHint(QSize(170,275));self.tiles.addItem(item);shown.append(work)
                 category='图文作品' if work['kind']=='images' else '影片与剧集'
                 if category not in side_groups:
-                    parent=QTreeWidgetItem(self.side_titles,[category]);parent.setExpanded(True);side_groups[category]=parent
+                    parent=QTreeWidgetItem(self.side_titles,[category]);parent.setExpanded(self.side_group_state.get(category,True));side_groups[category]=parent
                 side=QTreeWidgetItem(side_groups[category],[work['title']+(' · '+work['season'] if work['season'] else '')]);side.setIcon(0,QIcon(thumbnail(work,40,60)));side.setData(0,Qt.ItemDataRole.UserRole,work['id']);side.setToolTip(0,side.text(0));self.side_items[work['id']]=side
             self.empty.setVisible(not shown);self.tiles.setVisible(bool(shown));self.recent.setVisible(bool(shown));self.recent_label.setVisible(bool(shown));self.shelf_label.setText(f'我的影片 ({len(shown)})');self.side_count.setText(f'− 影片库 ({len(shown)})')
             for category,parent in side_groups.items():parent.setText(0,f'{category} ({parent.childCount()})')
@@ -530,7 +549,9 @@ class Workspace(QObject):
                 item=QListWidgetItem(QIcon(thumbnail(work,280,420)),work['title']+'\n'+(work.get('season') or '已入库'));item.setData(Qt.ItemDataRole.UserRole,work['id']);self.recent.addItem(item)
             if shown:self.hero.setPixmap(thumbnail(shown[0],1000,190,True));self.hero.setText(shown[0]['title']+' '+shown[0]['season']);self.hero.setToolTip(shown[0]['title'])
             else:self.hero.setPixmap(QPixmap());self.hero.setText('你的影片，集中管理。')
-            if self.current:self.render_work()
+            if self.current:
+                self.render_work()
+                if self.current in self.side_items:self.side_titles.setCurrentItem(self.side_items[self.current])
         except Exception as error:self.empty.setText('影片库读取失败：'+str(error));diagnostics.event('library.refresh.failed',str(error))
 
     def show_work(self,key):
