@@ -25,7 +25,7 @@ def gui_check():
     from download_queue import DownloadQueue
     from task_view import TaskDialog,DeleteDialog,STATUS_TEXTS
     from PySide6.QtGui import QFont,QFontMetrics,QImage,QPainter,QColor
-    from main import STYLE
+    from steam_theme import STYLE
     app=QApplication([]);app.setFont(QFont('Microsoft YaHei UI',10));app.setStyleSheet(STYLE)
     def settle():
         for _ in range(4):app.processEvents();time.sleep(.01)
@@ -34,9 +34,9 @@ def gui_check():
         with patch('download_tasks.directory',return_value=registry):
             created=[];outputs=[]
             for name,state in [('长标题测试'*30+'\n第二行','paused'),('pending-failed','failed'),('queued','queued'),('checking-100','running'),('completed-one','completed'),('completed-two','completed'),('cancelled','cancelled')]:
-                info={'url':'https://example.com/'+str(len(created)),'site':'AGE动漫','title':name,'formats':[{'id':'source'}]}
+                info={'url':'https://example.com/'+str(len(created)),'site':'AGE动漫','title':name,'formats':[{'id':'source','height':1080}]}
                 output=str(root/'short') if created else str(root/('保存位置'*20)/('长路径'*20))
-                task=tasks.create(info,'source',output);task['state']=state;task['download_percent']=100 if state in ('running','completed') else 42
+                task=tasks.create(info,'source',output);task['state']=state;task['download_percent']=100 if state in ('running','completed') else 42;task['total_bytes']=104857600
                 if state=='completed':
                     video=root/(name+'.mp4');video.write_bytes(b'user file');outputs.append(video)
                     task['result']={'path':str(video),'verified':True};tasks.save(task);tasks.finish(task)
@@ -70,6 +70,15 @@ def gui_check():
             assert created[0]['id'] in dialog.checked_ids
             QTest.mouseClick(dialog.table.viewport(),Qt.MouseButton.LeftButton,pos=checkbox)
             assert created[0]['id'] not in dialog.checked_ids
+            dialog.table.setCurrentCell(0,0);dialog.table.setFocus()
+            QTest.keyClick(dialog.table,Qt.Key.Key_Space)
+            assert created[0]['id'] in dialog.checked_ids
+            QTest.keyClick(dialog.table,Qt.Key.Key_Space)
+            assert created[0]['id'] not in dialog.checked_ids
+            assert created[0]['title'] in dialog.table.item(0,0).data(Qt.ItemDataRole.AccessibleTextRole)
+            detail=dialog.table.item(0,0).data(Qt.ItemDataRole.AccessibleDescriptionRole)
+            assert '1080p' in detail and '100.0 MB' in detail
+            assert created[0]['output'] not in detail
             # A row action captures its own identity even when another row is selected.
             from PySide6.QtWidgets import QPushButton
             dialog.table.selectRow(1)
