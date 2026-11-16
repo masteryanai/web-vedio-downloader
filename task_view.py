@@ -292,7 +292,7 @@ class TaskDialog(QDialog):
                 button.task_connected=True
                 task_id=task['id'];completed=task['state']=='completed'
                 if completed:
-                    button.setText('▶  打开文件');button.setEnabled(bool(task.get('result',{}).get('path')))
+                    button.setText('打开目录');button.setEnabled(bool(task.get('result',{}).get('path')))
                     button.clicked.connect(lambda checked=False,key=task_id:self.open_result(key))
                     button.setStyleSheet('QPushButton{background:#388620;color:white;border:0;padding:10px;} QPushButton:hover{background:#337a1e;}')
                 else:
@@ -312,7 +312,9 @@ class TaskDialog(QDialog):
     def open_result(self,task_id):
         row=self.visible.get(task_id)
         path=(row or {}).get('result',{}).get('path')
-        if path:QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).resolve())))
+        # Playback belongs to the season's player/confirmation flow. The task
+        # shortcut reveals the result without silently launching another player.
+        if path:QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).resolve().parent)))
 
     def filter_changed(self):
         self.checked_ids.clear();self.render(reset_scroll=True)
