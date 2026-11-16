@@ -53,3 +53,13 @@
 存储查询每个弹窗最多一个后台线程，运行中的系统调用无法打断时后续请求只保留最新一个；查询前后检查取消，旧 generation 与关闭后的结果不能更新界面。关闭不等待磁盘调用，后台线程不会阻塞退出。仍只读取已登记文件，不扫描目录。
 
 新增 subprocess Qt widget 行为回归，覆盖取消前不碰磁盘、慢查询期间连续切换跳过中间存储库、单 worker、旧 token 不回写以及 close 后待查丢弃和结果不回写。`test_storage*.py` 3 项通过，`test_library_ui.py` 3 项通过；真实窗口截图使用主仓虚拟环境在本机执行，因验证目标是 Windows Qt 客户端。
+
+## Jobs 原生线程收尾竞态
+
+完整回归中 worker 回调测试曾原生退出 3221226505，stderr 空。启用 PYTHONFAULTHANDLER 和 Qt 线程日志后，原样独立循环第 3 轮得到 `Fatal Python error: Aborted`；另一轮原样基线在第 7 轮复现，排除了必须有构建并发负载的假设。
+
+仅在 scratch 模块副本的 reaped 中加入 thread.wait() 后，10 轮全绿。进一步在 finished 接收槽内先检测 wait(0)，10 轮中 9 轮至少一个线程尚未完成 join，证明 Qt finished 信号可先于原生线程/TLS 清理完成。原实现此时先清空 running，让依赖 idle/shutdown 的测试或退出流程存在过早销毁 Qt 的窗口。
+
+最小修正为 reaped 在 GUI 线程收到 finished 后先 wait，再移出 running，保留显式 Slot、原有 queued 回调和线程所有权结构。未增加任务业务等待或修改下载策略。现有测试保留成功/失败回调在 GUI 线程的断言，补充 shutdown 返回完成，并始终启用 faulthandler。
+
+实际生产修正后原样独立测试 10/10 通过；Jobs 与三个影片库 UI 回归合计 4 项通过。未通过人为放宽退出时限掩盖竞态。scratch 探针不进入发布代码。

@@ -23,7 +23,8 @@ assert sorted(k for k,_ in seen)==['done','failed'],seen
 assert all(t==main for _,t in seen),seen
 assert all(t!=main for t in workers),workers
 assert not jobs.running
+assert jobs.shutdown()
 '''
-        env=dict(os.environ,PYTHONUTF8='1')
+        env=dict(os.environ,PYTHONUTF8='1',PYTHONFAULTHANDLER='1')
         result=subprocess.run([sys.executable,'-c',code],env=env,capture_output=True,text=True,encoding='utf-8',timeout=10)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

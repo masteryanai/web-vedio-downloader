@@ -51,7 +51,12 @@ class Jobs(QObject):
         callbacks=self.callbacks.pop(key,None)
         if callbacks and not self.closing:callbacks[1](error)
     @Slot()
-    def reaped(self):self.running.pop(self.sender(),None)
+    def reaped(self):
+        thread=self.sender()
+        # finished may precede native/TLS cleanup. Publish idle only after join,
+        # so shutdown cannot tear Qt down while the worker is still unwinding.
+        thread.wait()
+        self.running.pop(thread,None)
     def shutdown(self):
         self.closing=True
         for _,cancel in self.running.values():cancel.set()
