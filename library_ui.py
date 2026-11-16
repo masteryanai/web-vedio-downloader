@@ -105,21 +105,61 @@ def thumbnail(work,width=190,height=235,banner=False):
 class StorageDialog(QDialog):
     def __init__(self,workspace):
         super().__init__(workspace.window);self.ws=workspace;self.setWindowTitle('存储库与外部播放器');self.resize(730,500)
-        layout=QVBoxLayout(self);layout.addWidget(QLabel('每季新增下载使用一个存储库；外部导入文件保留原路径。'))
-        self.list=QListWidget();layout.addWidget(self.list)
+        from steam_dialogs import DialogPages
+        self.resize(940,690)
+        outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,0)
+        self.sections=DialogPages('应用设置');outer.addWidget(self.sections)
+        layout=self.sections.page('存储空间')
+        self.disks=QComboBox();self.disks.setObjectName('diskSelector');layout.addWidget(self.disks)
+        self.path_label=QLabel();self.path_label.setObjectName('muted');self.path_label.setWordWrap(True);layout.addWidget(self.path_label)
+        self.capacity=QLabel();layout.addWidget(self.capacity)
+        self.usage=QProgressBar();self.usage.setFixedHeight(9);self.usage.setTextVisible(False);self.usage.setRange(0,1000);layout.addWidget(self.usage)
+        self.legend=QLabel('磁盘已用 / 可用（包含其他文件）');self.legend.setObjectName('muted');layout.addWidget(self.legend)
+        self.entries_heading=QLabel();self.entries_heading.setObjectName('sectionTitle');layout.addWidget(self.entries_heading)
+        self.entries=QListWidget();self.entries.setMinimumHeight(150);layout.addWidget(self.entries,1)
+        self.list=QListWidget();self.list.setMaximumHeight(96);layout.addWidget(self.list)
         row=QHBoxLayout();layout.addLayout(row)
         for title,fn in [('添加存储库',self.add),('移除存储库记录',self.remove)]:
             button=QPushButton(title);button.clicked.connect(fn);row.addWidget(button)
+        note=QLabel('每季新增下载使用一个存储库；外部文件保留原路径。移除记录不会删除媒体文件。');note.setWordWrap(True);note.setObjectName('muted');layout.addWidget(note)
         import preferences
-        layout.addWidget(QLabel('外部播放器（留空使用系统默认）'))
+        player_layout=self.sections.page('外部播放器')
+        player_layout.addWidget(QLabel('留空使用系统默认播放器'))
         line=QHBoxLayout();self.player=QLineEdit(preferences.load()['external_player']);line.addWidget(self.player)
-        choose=QPushButton('选择 EXE');choose.clicked.connect(self.choose);line.addWidget(choose);layout.addLayout(line)
-        save=QPushButton('保存播放器设置');save.clicked.connect(self.save);layout.addWidget(save)
+        choose=QPushButton('选择 EXE');choose.clicked.connect(self.choose);line.addWidget(choose);player_layout.addLayout(line)
+        save=QPushButton('保存播放器设置');save.setObjectName('primary');save.clicked.connect(self.save);player_layout.addWidget(save);player_layout.addStretch()
+        self.disks.currentIndexChanged.connect(self.select_storage)
+        self.list.currentRowChanged.connect(self.disks.setCurrentIndex)
         self.reload()
     def reload(self):
-        self.list.clear()
+        selected=self.disks.currentData();self.list.blockSignals(True);self.disks.blockSignals(True)
+        self.list.clear();self.disks.clear()
         for lib in self.ws.store.read()['libraries']:
             item=QListWidgetItem(lib['label']+'  ·  '+lib['path']);item.setData(Qt.ItemDataRole.UserRole,lib['id']);self.list.addItem(item)
+            self.disks.addItem(lib['label']+'  ·  '+str(Path(lib['path']).anchor),lib['id'])
+        index=max(0,self.disks.findData(selected));self.disks.setCurrentIndex(index);self.list.setCurrentRow(index)
+        self.list.blockSignals(False);self.disks.blockSignals(False);self.select_storage()
+    def select_storage(self,*_):
+        import shutil
+        self.list.blockSignals(True);self.list.setCurrentRow(self.disks.currentIndex());self.list.blockSignals(False)
+        data=self.ws.store.read();lib=next((v for v in data['libraries'] if v['id']==self.disks.currentData()),None)
+        self.entries.clear()
+        if not lib:
+            self.path_label.setText('添加专用影片目录以查看存储空间');self.capacity.setText('暂无存储库');self.usage.setValue(0);self.entries_heading.setText('项目 0');return
+        self.path_label.setText(lib['path'])
+        def size(value):return f'{value/1024**3:.1f} GiB'
+        try:
+            disk=shutil.disk_usage(lib['path']);self.capacity.setText(f'{size(disk.total)} 中共有 {size(disk.free)} 可用');self.usage.setValue(round(disk.used/max(1,disk.total)*1000))
+        except OSError:self.capacity.setText('存储库离线 · 无法读取磁盘空间');self.usage.setValue(0)
+        works=[w for w in data['works'] if w.get('library_id')==lib['id']]
+        self.entries_heading.setText(f'项目 {len(works)}')
+        for work in works:
+            episodes=[e for e in data['episodes'] if e['work_id']==work['id']]
+            files=[f for e in episodes for f in e.get('files',[])]
+            sites=' / '.join(dict.fromkeys(v.get('site','未知来源') for v in work.get('sources',[]))) or '外部导入'
+            external=sum(bool(f.get('external')) for f in files)
+            self.entries.addItem(work['title']+'  '+work.get('season','')+'\n'+sites+f' · {len(episodes)} 个选集 · {len(files)} 个已登记文件'+(f'（外部 {external}）' if external else ''))
+        if not works:self.entries.addItem('此存储库暂无季条目。新增下载或导入后将在这里显示。')
     def add(self):
         path=QFileDialog.getExistingDirectory(self,'选择专用影片目录',options=QFileDialog.Option.DontUseNativeDialog)
         if path:
