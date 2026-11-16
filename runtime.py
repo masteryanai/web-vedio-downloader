@@ -7,7 +7,7 @@ import shutil
 import sys
 
 APP_NAME = "Web Video Downloader"
-APP_VERSION = "0.14.0"
+APP_VERSION = "0.15.0"
 SITES = ("央视网", "好看视频", "抖音", "B站")
 
 
@@ -47,3 +47,4 @@ def app_data_dir() -> Path:
         if not path.is_absolute():raise ValueError('WVD_DATA_DIR 必须使用绝对路径。')
         return path
     return program_dir() / 'data'
+

@@ -67,13 +67,13 @@ class Trend(QWidget):
         for i in range(1,5):
             y=28+(self.height()-40)*i/4;painter.drawLine(0,int(y),self.width(),int(y))
         painter.setPen(QColor('#88a6bd'));painter.drawText(14,21,'网络使用情况');painter.drawText(self.width()-108,21,'过去 120 秒')
-        def speed(value):return f'{value/1048576:.1f} MB/s' if value>=1048576 else f'{value/1024:.1f} KB/s' if value>=1024 else f'{value:.0f} B/s'
+        from transfer_stats import speed_text as speed
         painter.drawText(14,45,'当前 '+speed(self.values[-1] if self.values else 0)+'    峰值 '+speed(max(self.values) if self.values else 0))
         if len(self.values)<2:
             painter.setPen(QColor('#258ac4'));painter.drawLine(0,self.height()-8,self.width(),self.height()-8);return
         path=QPainterPath();height=max(self.values) or 1
         for i,value in enumerate(self.values):
-            x=i*self.width()/119;y=self.height()-8-value/height*(self.height()-20)
+            x=i*self.width()/119;y=self.height()-8-value/height*max(1,self.height()-66)
             if i==0:path.moveTo(x,y)
             else:path.lineTo(x,y)
         painter.setPen(QColor('#30bee9'));painter.drawPath(path)
@@ -474,7 +474,7 @@ class Workspace(QObject):
         self.details=QWidget(objectName='seasonDetails');detail=QVBoxLayout(self.details);detail.setContentsMargins(0,0,0,14);detail.setSpacing(12)
         self.banner=Artwork();self.banner.setFixedHeight(275);detail.addWidget(self.banner)
         self.work_title=QLabel(objectName='sectionTitle');self.work_title.setWordWrap(True);self.work_title.setContentsMargins(20,0,20,0)
-        action_strip=QFrame(objectName='actionStrip');row=QHBoxLayout(action_strip);row.setContentsMargins(20,10,20,10);self.download_missing=QPushButton('▶ 下载未下载集',objectName='playAction');self.download_missing.clicked.connect(self.download_work);row.addWidget(self.download_missing)
+        action_strip=QFrame(objectName='actionStrip');row=QHBoxLayout(action_strip);row.setContentsMargins(20,10,20,10);self.download_missing=QPushButton('↓ 下载未下载集',objectName='playAction');self.download_missing.clicked.connect(self.download_work);row.addWidget(self.download_missing)
         self.source=QComboBox();self.source.setMinimumWidth(130);self.source.currentIndexChanged.connect(self.source_changed);row.addWidget(self.source)
         self.source.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon);self.source.setMinimumContentsLength(12);self.source.setMaximumWidth(280)
         back=QPushButton('返回影片库');back.clicked.connect(self.home);row.addWidget(back);row.addStretch();more=QPushButton('管理此季 ▾');management=QMenu(more)
@@ -867,3 +867,4 @@ class Workspace(QObject):
 
 
 def install(window,content,old):return Workspace(window,content,old)
+
