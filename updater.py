@@ -10,7 +10,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import zipfile
-from runtime import APP_VERSION, app_data_dir, resource_path
+from runtime import APP_VERSION, app_data_dir, resource_path, PRODUCT_ID, EXECUTABLE, UPDATE_MANIFEST
 
 REPO = 'masteryanai/web-vedio-downloader'
 API = f'https://api.github.com/repos/{REPO}/releases/latest'
@@ -63,14 +63,14 @@ def check_update():
 
 
 def validate_manifest(manifest, tag):
-    if not isinstance(manifest, dict) or manifest.get('version') != tag.lstrip('v') or manifest.get('application') != 'WebVideoDownloader':
+    if not isinstance(manifest, dict) or manifest.get('version') != tag.lstrip('v') or manifest.get('application') != PRODUCT_ID:
         raise RuntimeError('更新信息与发布版本不一致。')
     digest=manifest.get('sha256')
     if not isinstance(digest,str) or not re.fullmatch('[0-9a-f]{64}',digest):
         raise RuntimeError('更新包缺少有效校验信息。')
     if type(manifest.get('size')) is not int or manifest['size']<=0:
         raise RuntimeError('更新包大小信息无效。')
-    if manifest.get('asset') != f'WebVideoDownloader-v{tag.lstrip("v")}-windows-x64.zip':
+    if manifest.get('asset') != f'{PRODUCT_ID}-v{tag.lstrip("v")}-windows-x64.zip':
         raise RuntimeError('更新包名称不正确。')
 
 
@@ -85,7 +85,7 @@ def check_public_update():
         if version(tag)<=version(APP_VERSION):
             return {'available':False,'message':f'已是最新版本 {APP_VERSION}（通过公开发布页检查）。'}
         # Resolve latest once, then pin manifest and ZIP to the same immutable tag.
-        manifest=get_json(PREFIX+tag+'/update.json',asset=True)
+        manifest=get_json(PREFIX+tag+'/'+UPDATE_MANIFEST,asset=True)
         validate_manifest(manifest,tag)
         return {'available':True,'manifest':manifest,'version':manifest['version'],
                 'url':PREFIX+tag+'/'+manifest['asset'],
@@ -105,7 +105,7 @@ def check_api_update():
         raise RuntimeError('未找到正式发布版本。')
     if version(release['tag_name']) <= version(APP_VERSION):
         return {'available':False,'message':f'已是最新版本 {APP_VERSION}。'}
-    asset = next((a for a in release.get('assets',[]) if a['name']=='update.json'), None)
+    asset = next((a for a in release.get('assets',[]) if a['name']==UPDATE_MANIFEST), None)
     if not asset:
         raise RuntimeError('此版本未提供兼容的在线更新信息，请到发布页手动下载。')
     manifest = get_json(asset_url(asset),asset=True)
@@ -131,7 +131,7 @@ def _prepare_update(info, cancel, progress):
     if not getattr(sys, 'frozen', False):
         raise RuntimeError('源码模式不能覆盖安装，请使用发布的 EXE 版本。')
     install = Path(sys.executable).resolve().parent
-    if not (install/'WebVideoDownloader.exe').is_file():
+    if not (install/EXECUTABLE).is_file():
         raise RuntimeError('安装目录验证失败。')
     with tempfile.TemporaryFile(dir=install.parent):
         pass
@@ -164,11 +164,11 @@ def _prepare_update(info, cancel, progress):
     progress({'percent':97,'stage':'正在检查安装包结构'})
     with zipfile.ZipFile(archive) as package:
         names = package.namelist()
-        if 'WebVideoDownloader/WebVideoDownloader.exe' not in names:
+        if f"{PRODUCT_ID}/{EXECUTABLE}" not in names:
             raise RuntimeError('更新包没有正确的主程序。')
         for name in names:
             parts = name.replace('\\','/').split('/')
-            if parts[0]!='WebVideoDownloader' or '..' in parts or ':' in name:
+            if parts[0]!=PRODUCT_ID or '..' in parts or ':' in name:
                 raise RuntimeError('更新包包含不安全路径。')
     if cancel.is_set():raise RuntimeError('已取消更新，已保留下载包。')
     plan_stage=update_cache.new_stage(folder)

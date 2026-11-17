@@ -5,7 +5,7 @@ import shutil
 import sys
 import time
 import update_cache
-from runtime import APP_VERSION,resource_path
+from runtime import APP_VERSION,resource_path,PRODUCT_ID
 from update_protocol import version
 
 
@@ -16,12 +16,12 @@ def ensure_maintenance():
         if folder.is_symlink() or (folder.exists() and getattr(folder.stat(),'st_file_attributes',0)&1024):return
         if folder.exists():
             data=json.loads(marker.read_text(encoding='utf-8'))
-            if data.get('application')!='WebVideoDownloader' or version(data['version'])>version(APP_VERSION):return
+            if data.get('application')!=PRODUCT_ID or version(data['version'])>version(APP_VERSION):return
         folder.mkdir(exist_ok=True)
         for name in ('recovery.ps1','update_install.ps1','update_window.ps1'):
             source=resource_path(name)
             if source.is_file():shutil.copy2(source,folder/name)
-        marker.write_text(json.dumps({'application':'WebVideoDownloader','version':APP_VERSION}),encoding='utf-8')
+        marker.write_text(json.dumps({'application':PRODUCT_ID,'version':APP_VERSION}),encoding='utf-8')
         shutil.copy2(resource_path('recovery-root.cmd'),root/'修复与回退.cmd')
     except (OSError,ValueError,KeyError):pass
 

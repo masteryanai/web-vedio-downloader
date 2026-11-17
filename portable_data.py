@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 import uuid
-from runtime import app_data_dir,legacy_data_dir,program_dir,APP_VERSION
+from runtime import app_data_dir,legacy_data_dir,program_dir,APP_VERSION,PRODUCT_ID
 
 MARKER='.portable-data.json'
 JOURNAL='.legacy-migration.json'
@@ -196,12 +196,12 @@ def relocate_data(data,old_root):
     marker=new_cache/'.update-cache.json'
     if marker.exists():
         owner=read(marker)
-        if owner.get('application')=='WebVideoDownloader' and Path(owner.get('install_dir',''))==old:
+        if owner.get('application')==PRODUCT_ID and Path(owner.get('install_dir',''))==old:
             safe(new_cache);write(marker,remap(owner))
             for entry in new_cache.iterdir():
                 if not entry.is_dir():continue
                 safe(entry);metadata=read(entry/'.cache-entry.json')
-                if metadata.get('application')!='WebVideoDownloader' or Path(metadata.get('install_dir',''))!=old:continue
+                if metadata.get('application')!=PRODUCT_ID or Path(metadata.get('install_dir',''))!=old:continue
                 write(entry/'.cache-entry.json',remap(metadata))
                 if (entry/'plan.json').exists():write(entry/'plan.json',remap(read(entry/'plan.json')))
     reconcile_updates(data)
@@ -215,14 +215,14 @@ def initialize(cancel=lambda:False,progress=lambda _:None):
     except OSError:raise RuntimeError('程序目录中的 data 无法写入，请将完整程序放到可写目录后重试；不会改用 C 盘。') from None
     marker=read(target/MARKER)
     names={p.name for p in target.iterdir()}-{'writer.lock','instance.lock'}
-    if (target/MARKER).exists() and marker.get('application')!='WebVideoDownloader':raise ValueError('data 目录标记无效，原文件已保留；请使用独立程序目录。')
+    if (target/MARKER).exists() and marker.get('application')!=PRODUCT_ID:raise ValueError('data 目录标记无效，原文件已保留；请使用独立程序目录。')
     if not (target/MARKER).exists() and names and not os.environ.get('WVD_DATA_DIR'):raise ValueError('data 目录非空且无法确认归属，原文件已保留；请使用独立程序目录。')
     from diagnostics import file_lock
     with file_lock(target):
         marker=read(target/MARKER)
         if not marker:
-            marker={'application':'WebVideoDownloader','legacy_done':False,'install_dir':str(program_dir())};write(target/MARKER,marker)
-        if marker.get('application')=='WebVideoDownloader' and marker.get('legacy_done') is True:
+            marker={'application':PRODUCT_ID,'legacy_done':False,'install_dir':str(program_dir())};write(target/MARKER,marker)
+        if marker.get('application')==PRODUCT_ID and marker.get('legacy_done') is True:
             if not isinstance(marker.get('install_dir'),str) or not Path(marker['install_dir']).is_absolute():raise ValueError('便携数据标记损坏，原数据已保留，请检查 data 目录。')
             if marker.get('install_dir')!=str(program_dir()):
                 relocate_data(target,marker['install_dir']);marker['install_dir']=str(program_dir());write(target/MARKER,marker)
@@ -237,5 +237,5 @@ def initialize(cancel=lambda:False,progress=lambda _:None):
                     if time.monotonic()>deadline:raise RuntimeError('请先退出其他下载器进程（包括命令行任务），再启动数据迁移。')
                     progress('等待旧版下载器退出…');time.sleep(.2)
             result=migrate(legacy_data_dir(),target,cancel,progress)
-        write(target/MARKER,{'application':'WebVideoDownloader','legacy_done':True,'install_dir':str(program_dir()),**result})
+        write(target/MARKER,{'application':PRODUCT_ID,'legacy_done':True,'install_dir':str(program_dir()),**result})
         return result

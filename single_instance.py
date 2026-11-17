@@ -4,7 +4,7 @@ import os
 import time
 from PySide6.QtCore import QObject,QLockFile,QTimer
 from PySide6.QtNetwork import QLocalServer,QLocalSocket
-from runtime import app_data_dir,legacy_data_dir
+from runtime import app_data_dir,legacy_data_dir,PRODUCT_ID
 
 
 class SingleInstance(QObject):
@@ -17,7 +17,7 @@ class SingleInstance(QObject):
             identity=user_id()
         else:
             folder.mkdir(parents=True,exist_ok=True);identity=os.path.normcase(str(folder.resolve()))
-        self.name='WebVideoDownloader-'+hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]
+        self.name=PRODUCT_ID+'-'+hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]
         if self.native:
             from instance_identity import UserMutex
             self.lock=UserMutex(self.name)
@@ -48,7 +48,7 @@ class SingleInstance(QObject):
         try:pid=lock.getLockInfo()[0]
         except (OSError,IndexError,TypeError):return False
         if pid<=0 or not __import__('diagnostics').alive(pid):return False
-        name='WebVideoDownloader-'+hashlib.sha256(os.path.normcase(str(folder.resolve())).encode('utf-8')).hexdigest()[:24]
+        name=PRODUCT_ID+'-'+hashlib.sha256(os.path.normcase(str(folder.resolve())).encode('utf-8')).hexdigest()[:24]
         if self.notify(name,lock):return True
         raise RuntimeError('旧版下载器仍在运行，请先退出旧版后再启动便携版。')
     def notify(self,name=None,lock=None):

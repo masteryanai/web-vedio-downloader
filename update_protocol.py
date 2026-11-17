@@ -8,11 +8,11 @@ import shutil
 import stat
 import zipfile
 
-APPLICATION='WebVideoDownloader'
+from runtime import PRODUCT_ID as APPLICATION,EXECUTABLE
 SCHEMA=2
 DATA_SCHEMA=1
 INSTALLATION='_internal/installation.json'
-ROOT_FILES={'WebVideoDownloader.exe','README.md','LICENSES.md'}
+ROOT_FILES={EXECUTABLE,'README.md','LICENSES.md'}
 
 
 def version(value):
@@ -69,7 +69,7 @@ def validate_inventory(data):
         if path.casefold()==INSTALLATION.casefold() or path.casefold() in seen:raise ValueError('程序清单重复或包含自身。')
         seen.add(path.casefold())
         if type(row.get('size')) is not int or not 0<=row['size']<=8*1024**3 or not re.fullmatch('[0-9a-f]{64}',str(row.get('sha256',''))):raise ValueError('程序文件校验信息无效。')
-    if 'webvideodownloader.exe' not in seen:raise ValueError('程序清单缺少主程序。')
+    if EXECUTABLE.casefold() not in seen:raise ValueError('程序清单缺少主程序。')
     if hashlib.sha256(canonical(files)).hexdigest()!=data.get('inventory_sha256'):raise ValueError('程序清单哈希不匹配。')
     return data
 

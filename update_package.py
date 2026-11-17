@@ -8,7 +8,7 @@ import shutil
 import sys
 import tempfile
 import update_cache
-from runtime import APP_VERSION,app_data_dir,resource_path
+from runtime import APP_VERSION,app_data_dir,resource_path,EXECUTABLE
 from update_protocol import (APPLICATION,INSTALLATION,canonical,digest,validate_inventory,verify_tree,
     differences,assemble_delta,extract_verified,owned_path,version)
 
@@ -161,7 +161,7 @@ def _prepare(info,cancel,progress):
     if not getattr(sys,'frozen',False):raise RuntimeError('源码模式不能覆盖安装，请使用发布的 EXE 版本。')
     import updater
     install=Path(sys.executable).resolve().parent
-    if not (install/'WebVideoDownloader.exe').is_file():raise ValueError('安装目录无效。')
+    if not (install/EXECUTABLE).is_file():raise ValueError('安装目录无效。')
     plan=select(info,install,cancel,progress,info.get('allow_full',False));folder=update_cache.register(update_cache.location())
     stage=update_cache.new_stage(folder);payload=stage/'payload';payload.mkdir()
     (stage/'target.json').write_bytes(canonical(plan['target']))

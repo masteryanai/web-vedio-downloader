@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 import sys
 
-APP_NAME = "Web Video Downloader"
+from product_identity import PRODUCT,PRODUCT_ID,APP_NAME,UPDATE_MANIFEST,HISTORY_MANIFEST,IS_LITE,EXECUTABLE
 APP_VERSION = "0.16.0"
 SITES = ("央视网", "好看视频", "抖音", "B站")
 
@@ -28,7 +28,7 @@ def find_tool(name: str) -> str:
 
 
 def default_download_dir() -> Path:
-    return Path.home() / "Downloads" / "WebVideoDownloader"
+    return Path.home() / "Downloads" / PRODUCT_ID
 
 
 def program_dir() -> Path:
@@ -36,7 +36,7 @@ def program_dir() -> Path:
 
 
 def legacy_data_dir() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "WebVideoDownloaderPrototype"
+    return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / (PRODUCT_ID+'Prototype')
 
 
 def app_data_dir() -> Path:
@@ -46,5 +46,5 @@ def app_data_dir() -> Path:
         path = Path(override)
         if not path.is_absolute():raise ValueError('WVD_DATA_DIR 必须使用绝对路径。')
         return path
-    return program_dir() / 'data'
+    return program_dir() / ('data-lite' if IS_LITE and not getattr(sys,'frozen',False) else 'data')
 

@@ -11,11 +11,11 @@ import sys
 import tempfile
 import threading
 import time
-from runtime import app_data_dir,legacy_data_dir
+from runtime import app_data_dir,legacy_data_dir,PRODUCT_ID
 from update_protocol import version
 import diagnostics
 
-APPLICATION='WebVideoDownloader'
+APPLICATION=PRODUCT_ID
 MARKER='.update-cache.json'
 ENTRY='.cache-entry.json'
 DAYS=7
