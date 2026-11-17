@@ -90,7 +90,10 @@ def fetch_browser(cancel,progress):
     value=descriptor();cache=program_dir()/'update'/'components';reject_links(cache);cache.mkdir(parents=True,exist_ok=True)
     archive=cache/value['asset']
     download(archive,value,lambda headers,timeout:updater.request(updater.PREFIX+value['tag']+'/'+value['asset'],True,headers,timeout),cancel,progress)
-    return install_from_archive(archive,value,cancel,progress)
+    installed=install_from_archive(archive,value,cancel,progress)
+    try:archive.unlink()
+    except OSError:pass  # Installed files are ready; cache cleanup can be retried.
+    return installed
 
 _handles=[]
 _activated=False
