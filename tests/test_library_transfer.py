@@ -105,3 +105,22 @@ class LibraryTransfer(unittest.TestCase):
             if created.returncode:self.skipTest('link creation unavailable')
         result=move_library(self.store,self.lib,self.dest)
         self.assertFalse(result['success']);self.assertEqual((external/'secret').read_bytes(),b'secret')
+    def test_copy_io_failure_preserves_original_and_mount(self):
+        media=self.source/'film.mp4';media.write_bytes(b'film')
+        original=Path.open;reads=[0]
+        def open_file(path,*args,**kwargs):
+            if path==media and args and args[0]=='rb':
+                reads[0]+=1
+                if reads[0]==2:raise OSError('source read failed')
+            return original(path,*args,**kwargs)
+        with patch.object(Path,'open',open_file):result=move_library(self.store,self.lib,self.dest)
+        self.assertFalse(result['success']);self.assertIn('source read failed',result['error'])
+        self.assertEqual(media.read_bytes(),b'film')
+        self.assertEqual(self.store.read()['libraries'][0]['path'],str(self.source))
+    def test_source_changed_during_copy_is_not_committed(self):
+        media=self.source/'film.mp4';media.write_bytes(b'film')
+        def update(row):
+            if row['phase']=='copy' and row['path']=='film.mp4':media.write_bytes(b'edited')
+        result=move_library(self.store,self.lib,self.dest,progress=update)
+        self.assertFalse(result['success']);self.assertEqual(media.read_bytes(),b'edited')
+        self.assertEqual(self.store.read()['libraries'][0]['path'],str(self.source))
