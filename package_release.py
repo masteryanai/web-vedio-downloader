@@ -11,8 +11,9 @@ def descriptor(path,tag):
     return {'asset':path.name,'tag':tag,'size':path.stat().st_size,'sha256':digest(path)}
 
 
-def package(root=None):
-    production=root is None;root=Path(root or Path(__file__).resolve().parent);source=root/'dist'/'WebVideoDownloader'
+def package(root=None,source=None):
+    production=root is None;root=Path(root or Path(__file__).resolve().parent)
+    source=Path(source) if source is not None else root/('build/release-output' if production else 'dist')/'WebVideoDownloader'
     from build_guard import check_output
     check_output(source, packaging=True)
     if production:
@@ -72,4 +73,7 @@ def package(root=None):
     return release
 
 
-if __name__=='__main__':package()
+if __name__=='__main__':
+    import argparse
+    parser=argparse.ArgumentParser();parser.add_argument('--source',type=Path)
+    package(source=parser.parse_args().source)

@@ -4,8 +4,11 @@ import marshal
 from PyInstaller.archive.readers import CArchiveReader
 
 
-def verify(root):
-    bundle = root / 'dist' / 'WebVideoDownloader'
+def verify(root, bundle=None):
+    root=Path(root)
+    bundle = Path(bundle) if bundle is not None else root / 'build' / 'release-output' / 'WebVideoDownloader'
+    from build_guard import check_output
+    check_output(bundle, packaging=True)
     archive = CArchiveReader(str(bundle / 'WebVideoDownloader.exe'))
     pyz = archive.open_embedded_archive(next(name for name in archive.toc if name.startswith('PYZ')))
     checked = []
@@ -31,4 +34,6 @@ def verify(root):
 
 
 if __name__ == '__main__':
-    verify(Path(__file__).resolve().parent)
+    import argparse
+    parser=argparse.ArgumentParser();parser.add_argument('bundle',nargs='?',type=Path)
+    verify(Path(__file__).resolve().parent,parser.parse_args().bundle)

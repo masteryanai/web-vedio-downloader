@@ -22,6 +22,7 @@ def _reject(path):
 def check_output(folder, *, packaging=False):
     """Fail before COLLECT can remove an output, including via direct spec usage."""
     root=Path(os.path.abspath(folder))
+    if os.path.normcase(str(root))==os.path.normcase(os.path.abspath(STABLE_RUNTIME)): _reject(root)
     # Inspect ancestors top down: do not lstat a child through an unchecked junction.
     for path in [*reversed(root.parents), root]:
         try: info=path.lstat()
