@@ -41,7 +41,7 @@ class Catalogue:
 
     def __init__(self):
         self.path=app_data_dir()/'library'/'catalogue.json'
-        self._leases={};self._statuses={};self._mounting=False
+        self._leases={};self._statuses={}
 
     def close(self):
         for lease in self._leases.values():lease.close()
@@ -54,12 +54,14 @@ class Catalogue:
     def library_status(self,key):
         lib=next(v for v in self.read()['libraries'] if v['id']==key)
         root=Path(lib['path'])
+        from library_archive import frozen
+        if frozen(root):return {'writable':False,'state':'busy','error':'存储库正在迁移，请稍后重试。','pending':False}
         if not root.is_dir():return {'writable':False,'state':'offline','error':'存储库离线。','pending':False}
         if not root.stat().st_mode & 0o222:return {'writable':False,'state':'read_only','error':'存储库只读。','pending':False}
         if key not in self._leases:
             try:
-                from library_archive import Lease
-                self._leases[key]=Lease(root)
+                from library_archive import SharedLease
+                self._leases[key]=SharedLease(root,self.path)
             except OSError as exc:return {'writable':False,'state':'read_only','error':'存储库只读或正被另一程序使用：'+str(exc),'pending':False}
         return self._statuses.get(key,{'writable':True,'state':'ready','error':'','pending':False})
 
@@ -83,6 +85,14 @@ class Catalogue:
             raise MetadataSaveError(self._statuses[key]['error']) from exc
 
     def retry_persist(self,key):return self.persist_library(key)
+
+    @contextmanager
+    def freeze_library(self,key):
+        from library_archive import freeze
+        lib=next(v for v in self.read()['libraries'] if v['id']==key)
+        status=self.library_status(key)
+        if not status['writable']:raise ValueError(status['error'])
+        with freeze(lib['path']):yield
 
     def probe_library(self,path,recovery='current'):
         from library_archive import DIRECTORY,load,materialize
@@ -114,6 +124,7 @@ class Catalogue:
         if mode not in ('restore','relocate','clone'):raise ValueError('无效挂载方式。')
         root=safe_folder(path);preview=self.probe_library(root,recovery)
         if preview['state']!='valid':raise ValueError(preview['error'] or '没有可恢复的存储库资料。')
+        if mode=='clone' and any(os.path.normcase(v['path'])==os.path.normcase(str(root)) for v in self.read()['libraries']):raise ValueError('已挂载的原库不能原地成为独立副本，请先复制到另一目录。')
         if preview['conflict'] and mode=='restore':raise ValueError('同一存储库已挂载，请选择搬家或独立副本。')
         target=root/DIRECTORY/('current.json' if recovery=='current' else 'sources.json' if recovery=='sources' else 'history/'+recovery.removeprefix('history:')+'.json')
         value=materialize(root,load(target));oldid=value['library']['id'];mapping={v['id']:v['id'] for v in [value['library'],*value['works'],*value['episodes']]}
@@ -220,7 +231,7 @@ class Catalogue:
         if not title.strip():raise ValueError('请填写作品名。')
         entries=collection['entries'];key=source_key(collection['site'],collection['key'],collection.get('variant',''))
         with self.change() as data:
-            work=next((w for w in data['works'] if any(s['key']==key for s in w['sources'])),None)
+            work=next((w for w in data['works'] if (not library_id or w.get('library_id')==library_id) and any(s['key']==key for s in w['sources'])),None)
             if merge:
                 work=next(w for w in data['works'] if w['id']==merge)
                 if work['kind']!=collection.get('kind','video'):raise ValueError('图文作品应独立入库，不能混入影片季。')

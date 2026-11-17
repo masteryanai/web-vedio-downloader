@@ -45,16 +45,24 @@ class Lease:
  def __init__(self,root):
   self.file=None;self.handle=None;self.name=None
   if os.name=='nt':
-   import ctypes
+   import threading
    name='Global\\WVDLibrary-'+hashlib.sha256(os.path.normcase(str(Path(root).resolve())).encode()).hexdigest()
    if name in _held_names:raise OSError('另一实例正在写入存储库。')
-   create=ctypes.windll.kernel32.CreateMutexW;create.restype=ctypes.c_void_p
-   self.handle=create(None,False,name)
-   if not self.handle:raise ctypes.WinError()
-   wait=ctypes.windll.kernel32.WaitForSingleObject;wait.argtypes=[ctypes.c_void_p,ctypes.c_ulong]
-   if wait(self.handle,0) not in (0,0x80):
-    self.close();raise OSError('另一程序正在写入存储库。')
-   self.name=name;_held_names.add(name)
+   ready=threading.Event();stop=threading.Event();state={}
+   def guardian():
+    import ctypes
+    create=ctypes.windll.kernel32.CreateMutexW;create.restype=ctypes.c_void_p
+    handle=create(None,False,name)
+    wait=ctypes.windll.kernel32.WaitForSingleObject;wait.argtypes=[ctypes.c_void_p,ctypes.c_ulong]
+    close=ctypes.windll.kernel32.CloseHandle;close.argtypes=[ctypes.c_void_p]
+    if not handle:state['error']=ctypes.WinError();ready.set();return
+    if wait(handle,0) not in (0,0x80):
+     close(handle);state['error']=OSError('另一程序正在写入存储库。');ready.set();return
+    ready.set();stop.wait()
+    release=ctypes.windll.kernel32.ReleaseMutex;release.argtypes=[ctypes.c_void_p];release(handle);close(handle)
+   thread=threading.Thread(target=guardian,daemon=True);thread.start();ready.wait()
+   if 'error' in state:raise state['error']
+   self.stop=stop;self.thread=thread;self.name=name;_held_names.add(name)
   else:
    import fcntl
    folder=Path(root)/DIRECTORY;folder.mkdir(exist_ok=True);self.file=(folder/'writer.lock').open('a+b')
@@ -62,10 +70,7 @@ class Lease:
    except BaseException:self.file.close();raise
  def close(self):
   if self.name:_held_names.discard(self.name);self.name=None
-  if self.handle:
-   import ctypes
-   release=ctypes.windll.kernel32.ReleaseMutex;release.argtypes=[ctypes.c_void_p];release(self.handle)
-   close=ctypes.windll.kernel32.CloseHandle;close.argtypes=[ctypes.c_void_p];close(self.handle);self.handle=None
+  if getattr(self,'stop',None):self.stop.set();self.thread.join();self.stop=None
   if self.file and not self.file.closed:self.file.close()
  def __del__(self):
   try:self.close()
@@ -132,3 +137,29 @@ def materialize(root,payload):
   for k in ('cover','banner'):
    if w.get(k):w[k]=resolve(root,w[k])
  return result
+
+# All Catalogue objects belonging to one application index share a write lease.
+_shared={}
+_frozen={}
+
+def frozen(root):return bool(_frozen.get(os.path.normcase(str(Path(root).resolve())),0))
+
+class SharedLease:
+ def __init__(self,root,owner):
+  self.key=(os.path.normcase(str(Path(root).resolve())),str(Path(owner).resolve()));self.closed=False
+  row=_shared.get(self.key)
+  if row is None:row=[Lease(root),0];_shared[self.key]=row
+  row[1]+=1
+ def close(self):
+  if self.closed:return
+  self.closed=True;row=_shared[self.key];row[1]-=1
+  if not row[1]:row[0].close();del _shared[self.key]
+
+from contextlib import contextmanager
+@contextmanager
+def freeze(root):
+ key=os.path.normcase(str(Path(root).resolve()));_frozen[key]=_frozen.get(key,0)+1
+ try:yield
+ finally:
+  _frozen[key]-=1
+  if not _frozen[key]:del _frozen[key]

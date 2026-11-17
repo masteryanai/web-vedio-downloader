@@ -89,3 +89,14 @@ class Recovery(unittest.TestCase):
    finally:
     if child.poll() is None:child.kill();child.communicate()
     c.close()
+
+ def test_freeze_blocks_other_catalogue_writes_without_blocking_reads(self):
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);second=Catalogue()
+   self.assertTrue(second.library_status(lib)['writable'])
+   with c.freeze_library(lib):
+    self.assertEqual(second.work(wid)['title'],'Title')
+    with self.assertRaises(ValueError):second.patch_work(wid,no_play_prompt=True)
+    with self.assertRaises(ValueError):second.delete_owned(eids[0],[str(media)])
+    self.assertTrue(media.exists())
+   second.patch_work(wid,no_play_prompt=True);self.assertTrue(c.work(wid)['no_play_prompt']);second.close();self.assertTrue(c.library_status(lib)['writable']);c.close()
