@@ -1,10 +1,16 @@
 """Self describing, validated library records. No network or media deletion."""
-import copy,hashlib,json,os,uuid
+import copy,hashlib,json,os,uuid,stat
 from pathlib import Path
 from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
 
 FORMAT=1
 DIRECTORY='.wvd-library'
+
+def reject_links(path):
+ for part in (Path(path),*Path(path).parents):
+  try:info=part.lstat()
+  except FileNotFoundError:continue
+  if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&1024:raise ValueError('路径不能经过符号链接或目录联接。')
 
 def canonical(value):return json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')
 
@@ -25,6 +31,7 @@ def sanitize(value):
 def encode(payload):return {'format':FORMAT,'payload':payload,'sha256':hashlib.sha256(canonical(payload)).hexdigest()}
 
 def load(path):
+ reject_links(path)
  record=json.loads(Path(path).read_text(encoding='utf-8'))
  if not isinstance(record,dict):raise ValueError('存储库资料结构无效。')
  if record.get('format')!=FORMAT:raise ValueError('无法识别的存储库格式；原件保留。')
@@ -45,7 +52,7 @@ def load(path):
  return payload
 
 def atomic(path,value):
- path=Path(path);path.parent.mkdir(parents=True,exist_ok=True);temp=path.with_name('.'+uuid.uuid4().hex+'.tmp')
+ path=Path(path);reject_links(path);path.parent.mkdir(parents=True,exist_ok=True);temp=path.with_name('.'+uuid.uuid4().hex+'.tmp')
  try:
   with temp.open('wb') as out:out.write(canonical(value));out.flush();os.fsync(out.fileno())
   os.replace(temp,path)
@@ -90,14 +97,9 @@ class Lease:
 
 def resolve(root,value):
  p=Path(value)
- if p.is_absolute():raise ValueError('库内相对路径无效。')
- raw=Path(root)/p
- for part in (raw,*raw.parents):
-  if part.is_symlink() or part.exists() and getattr(part.stat(),'st_file_attributes',0)&1024:raise ValueError('库内路径不能经过链接。')
- target=raw.resolve()
+ if p.is_absolute() or p.drive:raise ValueError('库内相对路径无效。')
+ raw=Path(root)/p;reject_links(raw);target=raw.resolve()
  if not target.is_relative_to(Path(root).resolve()):raise ValueError('库内路径越界。')
- for part in (target,*target.parents):
-  if part.is_symlink() or part.exists() and getattr(part.stat(),'st_file_attributes',0)&1024:raise ValueError('库内路径不能经过链接。')
  return str(target)
 
 def snapshot(data,lib,app_root,tasks=None):
@@ -106,27 +108,28 @@ def snapshot(data,lib,app_root,tasks=None):
   for key in ('cover','banner'):
    value=w.get(key,'')
    if not value:continue
-   source=Path(value);source=source if source.is_absolute() else Path(app_root)/source
+   source=Path(value);source=source if source.is_absolute() else Path(app_root)/source;reject_links(source)
    if source.is_file():
-    digest=hashlib.sha256(source.read_bytes()).hexdigest();dest=root/DIRECTORY/'covers'/(digest+source.suffix.lower());dest.parent.mkdir(parents=True,exist_ok=True)
+    digest=hashlib.sha256(source.read_bytes()).hexdigest();dest=root/DIRECTORY/'covers'/(digest+source.suffix.lower());reject_links(dest);dest.parent.mkdir(parents=True,exist_ok=True)
     if not dest.exists():atomic_bytes(dest,source.read_bytes())
     w[key]=dest.relative_to(root).as_posix()
    else:w[key]=''
  for e in episodes:
   for f in e.get('files',[]):
-   p=Path(f['path']).resolve()
+   reject_links(f['path']);p=Path(f['path']).resolve()
    try:f['path']=p.relative_to(root.resolve()).as_posix();f['location']='library'
    except ValueError:f['location']='external'
  payload={'library':{k:v for k,v in lib.items() if k in ('id','label')},'works':works,'episodes':episodes,'tasks':tasks or []}
  return sanitize(payload)
 
 def atomic_bytes(path,value):
+ reject_links(path)
  temp=path.with_name('.'+uuid.uuid4().hex+'.tmp')
  try:temp.write_bytes(value);os.replace(temp,path)
  finally:temp.unlink(missing_ok=True)
 
 def publish(root,payload):
- folder=Path(root)/DIRECTORY;current=folder/'current.json'
+ folder=Path(root)/DIRECTORY;reject_links(folder/'history');current=folder/'current.json'
  previous=load(current) if current.exists() else None
  fallback=copy.deepcopy(payload)
  for w in fallback['works']:
@@ -179,7 +182,7 @@ def freeze(root):
 
 def publish_recovery(root,payload):
  """Publish an explicitly selected recovery, retaining corrupt original bytes."""
- folder=Path(root)/DIRECTORY;current=folder/'current.json'
+ folder=Path(root)/DIRECTORY;reject_links(folder/'history');current=folder/'current.json'
  if current.exists():
   raw=current.read_bytes()
   try:record=json.loads(raw)

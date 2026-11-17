@@ -152,3 +152,68 @@ class Recovery(unittest.TestCase):
    c=Catalogue();c.path.parent.mkdir(parents=True);future=json.dumps({'schema':3,'libraries':[],'works':[],'episodes':[]}).encode();c.path.write_bytes(future)
    with self.assertRaises(ValueError):c.rebuild_index()
    self.assertEqual(c.path.read_bytes(),future);self.assertEqual(list((c.path.parent/'quarantine').glob('*')),[]);c.close()
+
+ def test_source_confirmation_gate_and_metadata_warning_survive_restart(self):
+  from media_library import MetadataSaveError
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);current=root/'media/.wvd-library/current.json';current.write_bytes(b'broken');c.mount_library(root/'media',recovery='sources');c.close()
+   fresh=Catalogue();self.assertFalse(fresh.library_status(lib)['writable']);self.assertEqual(fresh.library_status(lib)['state'],'needs_online_confirmation');fresh.confirm_source_restore(lib)
+   replace=os.replace
+   def fail(source,target):
+    if Path(target).name=='current.json':raise PermissionError('disk')
+    return replace(source,target)
+   with patch('os.replace',side_effect=fail):
+    with self.assertRaises(MetadataSaveError):fresh.patch_work(wid,check_hours=8)
+   fresh.close();again=Catalogue();self.assertTrue(again.library_status(lib)['pending']);again.retry_persist(lib);again.close();last=Catalogue();self.assertFalse(last.library_status(lib)['pending']);last.close()
+
+ def test_clone_archive_failure_rolls_back_index_tasks_caches_and_target_lease(self):
+  import shutil,download_tasks as tasks
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);task=tasks.create({'url':'https://example.org/episode/1','site':'demo','title':'one'},'hd',media.parent);task['library_episode']=eids[0];tasks.save(task);cache=tasks.work_path(task);cache.mkdir(parents=True);(cache/'source.part').write_bytes(b'partial');c.bind(eids[0],task['id']);shutil.copytree(root/'media',root/'copy')
+   before=c.path.read_bytes();taskbefore=tasks.task_file(task['id']).read_bytes();replace=os.replace
+   def fail(source,target):
+    if Path(target)==root/'copy/.wvd-library/current.json':raise PermissionError('disk')
+    return replace(source,target)
+   with patch('os.replace',side_effect=fail):
+    with self.assertRaises(OSError):c.mount_library(root/'copy',mode='clone')
+   self.assertEqual(c.path.read_bytes(),before);self.assertEqual(tasks.task_file(task['id']).read_bytes(),taskbefore);self.assertEqual({r['id'] for r in tasks.records()},{task['id']});self.assertEqual(len(list((root/'copy').rglob('.video-downloader-*'))),1)
+   with patch.dict(os.environ,WVD_DATA_DIR=str(root/'second')):
+    other=Catalogue();other.mount_library(root/'copy');self.assertTrue(other.library_status(lib)['writable']);other.close()
+   self.assertTrue(c.library_status(lib)['writable']);c.close()
+
+ def test_relocation_central_failure_rolls_back_task_output_index_and_old_lease(self):
+  import shutil,download_tasks as tasks
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);task=tasks.create({'url':'https://example.org/episode/1','site':'demo','title':'one'},'hd',media.parent);task['library_episode']=eids[0];tasks.save(task);c.bind(eids[0],task['id']);shutil.copytree(root/'media',root/'moved');before=c.path.read_bytes();taskbefore=tasks.task_file(task['id']).read_bytes();replace=os.replace
+   def fail(source,target):
+    if Path(target)==c.path:raise PermissionError('central disk')
+    return replace(source,target)
+   with patch('os.replace',side_effect=fail):
+    with self.assertRaises(OSError):c.mount_library(root/'moved',mode='relocate')
+   self.assertEqual(c.path.read_bytes(),before);self.assertEqual(tasks.task_file(task['id']).read_bytes(),taskbefore);self.assertEqual(tasks.load(task['id'])['output'],str(media.parent));self.assertTrue(c.library_status(lib)['writable'])
+   with patch.dict(os.environ,WVD_DATA_DIR=str(root/'second')):
+    other=Catalogue();other.mount_library(root/'moved');self.assertTrue(other.library_status(lib)['writable']);other.close()
+   c.close()
+
+ @unittest.skipUnless(os.name=='nt','Windows junction boundary')
+ def test_windows_junction_library_and_file_references_are_rejected(self):
+  import subprocess
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);alias=root/'alias'
+   made=subprocess.run(['cmd','/c','mklink','/J',str(alias),str(media.parent)],capture_output=True)
+   self.assertEqual(made.returncode,0)
+   with self.assertRaises(ValueError):c.probe_library(alias)
+   with self.assertRaises(ValueError):c.attach(eids[0],alias/media.name)
+   self.assertEqual(media.read_bytes(),b'original');c.close()
+
+ def test_missing_task_bridge_does_not_drop_unbound_resume_tasks(self):
+  import builtins,download_tasks as tasks
+  from media_library import MetadataSaveError
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);task=tasks.create({'url':'https://example.org/episode/1','site':'demo','title':'one'},'hd',media.parent);original=builtins.__import__
+   def missing(name,*args,**kwargs):
+    if name=='library_tasks':raise ImportError('missing bridge')
+    return original(name,*args,**kwargs)
+   with patch('builtins.__import__',side_effect=missing):
+    with self.assertRaises(MetadataSaveError):c.patch_work(wid,check_hours=12)
+   self.assertTrue(c.library_status(lib)['pending']);self.assertEqual(tasks.load(task['id'])['output'],str(media.parent));c.close()
