@@ -7,6 +7,20 @@ import download_tasks as tasks
 import library_tasks
 
 class LibraryTasksTests(unittest.TestCase):
+    def test_pending_verification_survives_portable_library_copy(self):
+        import shutil
+        from verification_state import capture,validate
+        with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,WVD_DATA_DIR=str(Path(folder)/'data')):
+            base=Path(folder);old=base/'old';old.mkdir();new=base/'new'
+            task=tasks.create({'url':'https://example.com/watch/1','site':'example','title':'Pending'},'hd',old/'season')
+            cache=tasks.work_path(task);cache.mkdir(parents=True);media=cache/'ready.mp4';media.write_bytes(b'pending-media')
+            task.update(state='paused',stage='待校验',phase='verify',library_episode='e'*32,verification=capture(cache,media,{'duration':10},{'height':720},'.mp4'));tasks.save(task)
+            context={'works':[{'id':'w','library_id':'lib'}],'episodes':[{'id':'e'*32,'work_id':'w','task_ids':[task['id']]}]}
+            rows=library_tasks.snapshot_tasks('lib',old,context);self.assertNotIn(str(old),str(rows[0]['verification']))
+            shutil.copytree(old,new);mapping=library_tasks.restore_tasks(rows,new,{task['id']:'b'*32})
+            restored=tasks.load(mapping[task['id']]);path,value=validate(restored)
+            self.assertTrue(path.is_relative_to(new));self.assertEqual(path.read_bytes(),b'pending-media');self.assertEqual(value['duration'],10)
+
     def test_move_restores_paused_task_at_new_root_without_secrets(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder); old=base/'old'; new=base/'new';old.mkdir()

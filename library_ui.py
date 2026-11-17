@@ -296,7 +296,7 @@ class AddControls(QFrame):
         line=QHBoxLayout();layout.addLayout(line)
         for text,state in [('全选未下载',True),('全不选',False)]:
             button=QPushButton(text);button.clicked.connect(lambda _,s=state:self.check_all(s));line.addWidget(button)
-        new=QPushButton('未匹配集确认为新增');new.clicked.connect(self.map_new);line.addWidget(new)
+        new=QPushButton('未匹配集确认为新增');new.clicked.connect(self.map_new);advanced_layout.addWidget(new)
         self.reload_libraries()
         for combo in (self.library,self.merge,self.route):
             combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon);combo.setMinimumContentsLength(16)

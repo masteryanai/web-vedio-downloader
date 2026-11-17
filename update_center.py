@@ -3,7 +3,7 @@ import threading
 from PySide6.QtCore import QObject,QThread,QTimer,Signal,Slot,Qt,QUrl
 from PySide6.QtGui import QTextDocument,QDesktopServices
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QTextBrowser,QPushButton,
-    QProgressBar,QComboBox,QMessageBox,QApplication,QFrame)
+    QProgressBar,QComboBox,QMessageBox,QApplication,QFrame,QSizePolicy)
 from runtime import APP_VERSION
 import diagnostics
 
@@ -42,6 +42,7 @@ class UpdateCenter(QDialog):
         box=QVBoxLayout(self)
         self.version_label=QLabel(f'当前版本 {APP_VERSION}');self.version_label.setWordWrap(True);box.addWidget(self.version_label)
         self.progress_card=QFrame(objectName='updateProgress');status=QVBoxLayout(self.progress_card);status.setSpacing(10);status.setContentsMargins(18,16,18,16)
+        self.progress_card.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Maximum)
         self.steps=QLabel('检查本地 → 下载 → 准备 → 校验 → 待安装 → 更新重启');status.addWidget(self.steps)
         self.label=QLabel('正在检查更新…');self.label.setWordWrap(True);self.label.setStyleSheet('font-size:18px;font-weight:600;');status.addWidget(self.label)
         self.metrics=QLabel(objectName='metrics');self.metrics.setWordWrap(True);status.addWidget(self.metrics)
@@ -71,11 +72,15 @@ class UpdateCenter(QDialog):
         self.version_label.setText(f'当前 {APP_VERSION} → 目标 {info["version"]} · 发布：{info.get("manifest",{}).get("published_at","未知")}' if info.get('available') else info.get('message','未发现新版本'))
         self.notes.render(info.get('notes',''));self.label.setText('发现新版本，可下载更新' if info.get('available') else info.get('message','未发现更新'))
         self.steps.setVisible(bool(info.get('available')));self.bar.setVisible(bool(info.get('available')))
+        self.metrics.setVisible(bool(info.get('available')));self.progress_detail.setVisible(bool(info.get('available')))
+        self.progress_card.setMaximumHeight(16777215 if info.get('available') else 80)
         if not info.get('available'):self.notes.render('## 当前已是最新版本\n\n暂时没有需要安装的更新。可查看历史版本或打开发布页。')
         if info.get('available') and info.get('manifest',{}).get('schema')==2:
             self.catalog_manifest=info['manifest'];self.preview()
         self.refresh()
     def preview(self):
+        self.progress_card.setMaximumHeight(16777215)
+        self.metrics.show();self.progress_detail.show()
         from update_package import preview
         try:self.previewed(preview(self.info))
         except (ValueError,KeyError,TypeError) as error:self.failed(error);return

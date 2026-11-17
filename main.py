@@ -846,6 +846,8 @@ def gui(args: argparse.Namespace) -> int:
     app.setFont(QFont("Microsoft YaHei UI", 10))
     from steam_theme import STYLE as steam_style
     app.setStyleSheet(steam_style)
+    from gui_gc import GuiCollector
+    collector=GuiCollector(app)
     recorder=diagnostics.start()
     heartbeat=QTimer(app);heartbeat.setInterval(500)
     if recorder:heartbeat.timeout.connect(recorder.beat);heartbeat.start()
@@ -924,6 +926,7 @@ def gui(args: argparse.Namespace) -> int:
         heartbeat.stop()
         if recorder:recorder.stop()
         instance.close()
+        collector.close()
 
 
 STYLE = """

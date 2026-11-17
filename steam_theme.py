@@ -23,6 +23,7 @@ QComboBox QAbstractItemView {background:#1c2e3e;color:#d1e4f4;selection-backgrou
 QTableWidget,QListWidget,QScrollArea {background:#202329;color:#bfd3e4;border:0;alternate-background-color:#292e36;gridline-color:#34485b;}
 QTableWidget::item:selected,QListWidget::item:selected {background:#3e5068;color:#effaff;}
 QHeaderView::section {background:#292e36;color:#98b5cb;padding:7px;border:0;border-bottom:1px solid #405368;}
+QTableWidget QHeaderView {background:#292e36;} QTableCornerButton::section {background:#292e36;border:0;}
 QTabBar::tab {background:#213140;color:#93afc6;padding:10px 18px;} QTabBar::tab:selected {background:#3e5068;color:#e7f5ff;border-bottom:2px solid #1a9fff;}
 QProgressBar {background:#10202d;border:0;border-radius:2px;color:#dfedf8;text-align:center;} QProgressBar::chunk {background:#1a9fff;border-radius:2px;}
 QMenu {background:#253645;border:1px solid #435a6c;} QMenu::item {padding:8px 25px;} QMenu::item:selected {background:#3d607b;}
