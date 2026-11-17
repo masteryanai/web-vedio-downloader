@@ -26,10 +26,22 @@ def encode(payload):return {'format':FORMAT,'payload':payload,'sha256':hashlib.s
 
 def load(path):
  record=json.loads(Path(path).read_text(encoding='utf-8'))
+ if not isinstance(record,dict):raise ValueError('存储库资料结构无效。')
  if record.get('format')!=FORMAT:raise ValueError('无法识别的存储库格式；原件保留。')
- payload=record['payload']
+ payload=record.get('payload')
+ if not isinstance(payload,dict):raise ValueError('存储库资料结构无效。')
  if hashlib.sha256(canonical(payload)).hexdigest()!=record.get('sha256'):raise ValueError('存储库资料校验失败；原件保留。')
  if not isinstance(payload.get('library'),dict) or not isinstance(payload.get('works'),list) or not isinstance(payload.get('episodes'),list):raise ValueError('存储库资料结构无效。')
+ libid=payload['library'].get('id')
+ if not isinstance(libid,str) or not libid:raise ValueError('存储库身份无效。')
+ works=payload['works'];episodes=payload['episodes']
+ if any(not isinstance(w,dict) or not isinstance(w.get('id'),str) or w.get('library_id')!=libid for w in works):raise ValueError('作品身份无效。')
+ ids={w['id'] for w in works}
+ if len(ids)!=len(works):raise ValueError('作品身份重复。')
+ if any(not isinstance(e,dict) or not isinstance(e.get('id'),str) or e.get('work_id') not in ids or not isinstance(e.get('files',[]),list) for e in episodes):raise ValueError('选集身份无效。')
+ if len({e['id'] for e in episodes})!=len(episodes):raise ValueError('选集身份重复。')
+ for e in episodes:
+  if any(not isinstance(f,dict) or not isinstance(f.get('path'),str) or f.get('location') not in ('library','external') for f in e.get('files',[])):raise ValueError('文件关联无效。')
  return payload
 
 def atomic(path,value):
