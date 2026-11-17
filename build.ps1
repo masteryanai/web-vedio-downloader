@@ -19,5 +19,7 @@ if ($LASTEXITCODE -ne 0) { throw '适配列表同步失败。' }
 if ($LASTEXITCODE -ne 0) { throw 'Windows 打包失败。' }
 & $PythonPath (Join-Path $PSScriptRoot 'trim_bundle.py')
 if ($LASTEXITCODE -ne 0) { throw '整理发布目录失败。' }
+& $PythonPath (Join-Path $PSScriptRoot 'verify_bundle.py')
+if ($LASTEXITCODE -ne 0) { throw '发布内容与源码不一致，已停止构建。' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md'),(Join-Path $PSScriptRoot 'LICENSES.md') -Destination (Join-Path $PSScriptRoot 'dist\WebVideoDownloader') -Force
 Write-Host '构建完成：dist\WebVideoDownloader\WebVideoDownloader.exe'
