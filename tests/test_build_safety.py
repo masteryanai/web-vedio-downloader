@@ -11,6 +11,19 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 
 class BuildSafety(unittest.TestCase):
+    def test_playwright_type_declarations_are_program_files_but_media_ts_is_protected(self):
+        from update_protocol import tree_inventory
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'WebVideoDownloader.exe').write_bytes(b'program')
+            declaration=root/'_internal/playwright/driver/package/types/protocol.d.ts'
+            declaration.parent.mkdir(parents=True);declaration.write_bytes(b'export type Protocol = string;')
+            check_output(root);inventory=tree_inventory(root,'0.16.0')
+            self.assertIn('_internal/playwright/driver/package/types/protocol.d.ts',[row['path'] for row in inventory['files']])
+            media=declaration.with_name('film.ts');media.write_bytes(b'private video')
+            with self.assertRaises(RuntimeError):check_output(root)
+            with self.assertRaises(ValueError):tree_inventory(root,'0.16.0')
+            self.assertEqual(media.read_bytes(),b'private video')
+
     def test_direct_spec_stops_before_analysis_and_preserves_user_bytes(self):
         with tempfile.TemporaryDirectory() as folder:
             dist=Path(folder);app=dist/'WebVideoDownloader';sentinel=app/'data/library.json'

@@ -8,6 +8,12 @@ RESERVED = {'data', '.wvd', '.wvd-library', '.portable-data.json', 'library.json
             'settings.json', 'tasks.json', 'queue.json', 'sessions.json', 'library.db', 'catalogue.json', 'sessions.dpapi', 'download-tasks', 'adapted-sites.json'}
 MEDIA = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.part', '.srt', '.ass', '.mp3', '.flac'}
 ROOT_PROGRAM = {'webvideodownloader.exe', '_internal', 'readme.md', 'licenses.md', '修复与回退.cmd'}
+PLAYWRIGHT_TYPES = {'_internal/playwright/driver/package/'+name for name in
+                    ('index.d.ts','types/protocol.d.ts','types/structs.d.ts','types/types.d.ts')}
+
+
+def program_typescript(name):
+    return name.startswith('_internal/vendor/cctv-h5e-decrypt/') or name in PLAYWRIGHT_TYPES
 
 
 def protected_name(name):
@@ -37,7 +43,7 @@ def check_output(folder, *, packaging=False):
                 path=Path(entry.path);info=entry.stat(follow_symlinks=False)
                 if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0)&1024: _reject(path)
                 if protected_name(entry.name): _reject(path)
-                if path.suffix.casefold()=='.ts' and not path.relative_to(root).as_posix().startswith('_internal/vendor/cctv-h5e-decrypt/'): _reject(path)
+                if path.suffix.casefold()=='.ts' and not program_typescript(path.relative_to(root).as_posix()): _reject(path)
                 if parent==root and entry.name.casefold() not in ROOT_PROGRAM:
                     # Packaging ignores update/maintenance folders, but rebuilding must not erase them.
                     if not packaging: _reject(path)

@@ -30,8 +30,8 @@ def relative(name):
     parts=name.split('/')
     if any(part in ('','.','..') or part.endswith((' ','.')) for part in parts):raise ValueError('程序清单路径越界。')
     if parts[0] not in ROOT_FILES and not (parts[0]=='_internal' and len(parts)>1):raise ValueError('拒绝修改非程序文件。')
-    from build_guard import protected_name
-    if any(protected_name(part) for part in parts) or (name.casefold().endswith('.ts') and not name.startswith('_internal/vendor/cctv-h5e-decrypt/')):raise ValueError('拒绝修改用户资料或媒体。')
+    from build_guard import protected_name,program_typescript
+    if any(protected_name(part) for part in parts) or (name.casefold().endswith('.ts') and not program_typescript(name)):raise ValueError('拒绝修改用户资料或媒体。')
     if any(re.fullmatch(r'(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?',part) for part in parts):raise ValueError('拒绝设备路径。')
     return name
 
