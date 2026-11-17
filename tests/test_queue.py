@@ -1,4 +1,5 @@
 import tempfile
+import os
 import threading
 import time
 import unittest
@@ -12,6 +13,11 @@ import preferences
 
 
 class QueueTests(unittest.TestCase):
+    def setUp(self):
+        profile=tempfile.TemporaryDirectory();self.addCleanup(profile.cleanup)
+        environment=patch.dict(os.environ,WVD_DATA_DIR=str(Path(profile.name)/'data'))
+        environment.start();self.addCleanup(environment.stop)
+
     @classmethod
     def setUpClass(cls):
         cls.app = QCoreApplication.instance() or QCoreApplication([])

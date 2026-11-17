@@ -114,6 +114,20 @@ class DownloadQueue(QObject):
         with tasks.lock(task_id):
             task = tasks.load(task_id)
             if task['state'] in tasks.TERMINAL: return False
+            # Restored queues must respect the physical library's writer lease,
+            # including tasks made by older clients without an episode binding.
+            from media_library import Catalogue
+            store=Catalogue()
+            try:
+                context=store.read();episode=next((e for e in context['episodes'] if e['id']==task.get('library_episode')),None)
+                work=next((w for w in context['works'] if episode and w['id']==episode['work_id']),None)
+                from pathlib import Path
+                lib=next((v for v in context['libraries'] if (work and v['id']==work.get('library_id')) or Path(task['output']).is_relative_to(Path(v['path']))),None)
+                if lib:
+                    state=store.library_status(lib['id'])
+                    if not state['writable']:raise ValueError(state['error'] or '存储库当前不可写。')
+                    store.persist_library(lib['id'])
+            finally:store.close()
             task['state'] = 'queued'; tasks.save(task)
         self.initial_pending.pop(task_id,None)
         if self.batch_rows and all(row['state'] in tasks.TERMINAL for row in self.batch_rows.values()):self.batch_rows.clear()

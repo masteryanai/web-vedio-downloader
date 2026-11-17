@@ -124,3 +124,18 @@ class LibraryTransfer(unittest.TestCase):
         result=move_library(self.store,self.lib,self.dest,progress=update)
         self.assertFalse(result['success']);self.assertEqual(media.read_bytes(),b'edited')
         self.assertEqual(self.store.read()['libraries'][0]['path'],str(self.source))
+
+    def test_legacy_registered_child_library_prevents_parent_transfer(self):
+        import shutil
+        child=self.store.library(self.root/'independent','Child')
+        (self.root/'independent/child.mp4').write_bytes(b'child media')
+        self.store.close();shutil.move(self.root/'independent',self.source/'nested')
+        with self.store.change(persist=False) as data:
+            next(v for v in data['libraries'] if v['id']==child)['path']=str(self.source/'nested')
+        index=self.store.path.read_bytes();result=move_library(self.store,self.lib,self.dest)
+        self.assertFalse(result['success'],result);self.assertIn('嵌套',result['error']);self.assertEqual((self.source/'nested/child.mp4').read_bytes(),b'child media');self.assertFalse(self.dest.exists());self.assertEqual(self.store.path.read_bytes(),index)
+
+    def test_target_inside_another_registered_library_is_rejected_before_copy(self):
+        other=self.store.library(self.root/'other');destination=self.root/'other/new-copy';index=self.store.path.read_bytes();(self.source/'film.mp4').write_bytes(b'parent media')
+        result=move_library(self.store,self.lib,destination)
+        self.assertFalse(result['success'],result);self.assertIn('嵌套',result['error']);self.assertFalse(destination.exists());self.assertEqual((self.source/'film.mp4').read_bytes(),b'parent media');self.assertEqual(self.store.path.read_bytes(),index)

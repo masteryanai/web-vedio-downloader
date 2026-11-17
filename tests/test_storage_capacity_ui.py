@@ -23,7 +23,7 @@ def check():
     from storage_presentation import storage_snapshot
     app=QApplication([])
     libraries=[{'id':str(i),'label':str(i),'path':str(Path(os.environ['WVD_DATA_DIR'])/str(i))} for i in range(3)]
-    ws=SimpleNamespace(window=QWidget(),store=SimpleNamespace(read=lambda:{'libraries':libraries,'works':[],'episodes':[]}))
+    ws=SimpleNamespace(window=QWidget(),store=SimpleNamespace(read=lambda:{'libraries':libraries,'works':[],'episodes':[]},library_status=lambda key:{'writable':True,'pending':False,'state':'ready','error':''}))
     started=threading.Event();release=threading.Event();calls=[];active=[]
     def disk(path):
         calls.append(str(path));active.append(threading.get_ident())

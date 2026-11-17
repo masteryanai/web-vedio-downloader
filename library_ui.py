@@ -39,6 +39,7 @@ class Jobs(QObject):
         thread.started.connect(job.run);job.result.connect(self.received,Qt.ConnectionType.QueuedConnection);job.failed.connect(self.failed,Qt.ConnectionType.QueuedConnection)
         job.finished.connect(thread.quit);job.finished.connect(job.deleteLater)
         thread.finished.connect(self.reaped);thread.finished.connect(thread.deleteLater);thread.start()
+        return cancel
     @Slot(str,object)
     def received(self,key,value):
         callbacks=self.callbacks.pop(key,None)
@@ -128,6 +129,8 @@ class StorageDialog(QDialog):
         self.resize(900,720)
         outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,0)
         self.sections=DialogPages('应用设置');outer.addWidget(self.sections)
+        from library_management import LibraryManager
+        self.manager=LibraryManager(workspace,self)
         layout=self.sections.page('存储空间');layout.setSpacing(10)
         self.disks=QComboBox();self.disks.setObjectName('diskSelector');layout.addWidget(self.disks)
         self.path_label=QLabel();self.path_label.setObjectName('muted');self.path_label.setWordWrap(True);layout.addWidget(self.path_label)
@@ -140,8 +143,12 @@ class StorageDialog(QDialog):
         self.entries=QListWidget();self.entries.setObjectName('storageEntries');self.entries.setSpacing(2);self.entries.setMinimumHeight(220);self.entries.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);layout.addWidget(self.entries,1)
         self.list=QListWidget();self.list.hide()
         row=QHBoxLayout();layout.addLayout(row)
-        for title,fn in [('添加存储库',self.add),('移除存储库记录',self.remove)]:
+        for title,fn in [('添加 / 恢复库',self.add),('迁移整个库',self.manager.move),('解除挂载',self.remove)]:
             button=QPushButton(title);button.clicked.connect(fn);row.addWidget(button)
+        actions=QHBoxLayout();layout.addLayout(actions)
+        for title,fn in [('重试保存 / 来源恢复',self.manager.retry),('修复程序索引',self.manager.repair_index)]:
+            button=QPushButton(title);button.clicked.connect(fn);actions.addWidget(button)
+        self.archive_status=QLabel();self.archive_status.setWordWrap(True);self.archive_status.setObjectName('muted');layout.addWidget(self.archive_status)
         note=QLabel('每季新增下载使用一个存储库；外部文件保留原路径。移除记录不会删除媒体文件。');note.setWordWrap(True);note.setObjectName('muted');layout.addWidget(note)
         import preferences
         player_layout=self.sections.page('外部播放器')
@@ -155,7 +162,11 @@ class StorageDialog(QDialog):
     def reload(self):
         selected=self.disks.currentData();self.list.blockSignals(True);self.disks.blockSignals(True)
         self.list.clear();self.disks.clear()
-        for lib in self.ws.store.read()['libraries']:
+        try:data=self.ws.store.read()
+        except (ValueError,OSError) as error:
+            self.list.blockSignals(False);self.disks.blockSignals(False)
+            self.path_label.setText('程序索引读取失败，可先修复索引，再添加已有库。');self.capacity.setText(str(error));self.entries.clear();return
+        for lib in data['libraries']:
             item=QListWidgetItem(lib['label']+'  ·  '+lib['path']);item.setData(Qt.ItemDataRole.UserRole,lib['id']);self.list.addItem(item)
             self.disks.addItem(lib['label']+'  ·  '+str(Path(lib['path']).anchor),lib['id'])
         index=max(0,self.disks.findData(selected));self.disks.setCurrentIndex(index);self.list.setCurrentRow(index)
@@ -164,10 +175,14 @@ class StorageDialog(QDialog):
         from storage_presentation import StorageRow
         self._cancel.set();self._cancel=threading.Event();self._generation+=1;generation=self._generation;cancel=self._cancel
         self.list.blockSignals(True);self.list.setCurrentRow(self.disks.currentIndex());self.list.blockSignals(False)
-        data=self.ws.store.read();lib=next((v for v in data['libraries'] if v['id']==self.disks.currentData()),None)
+        try:data=self.ws.store.read()
+        except (ValueError,OSError):return
+        lib=next((v for v in data['libraries'] if v['id']==self.disks.currentData()),None)
         self.entries.clear();self._rows={};self.usage.set_usage()
         if not lib:
-            self.path_label.setText('添加专用影片目录以查看存储空间');self.capacity.setText('暂无存储库');self.legend.clear();self.entries_heading.setText('项目 0');return
+            self.path_label.setText('添加专用影片目录以查看存储空间');self.capacity.setText('暂无存储库');self.legend.clear();self.entries_heading.setText('项目 0');self.archive_status.clear();return
+        state=self.ws.store.library_status(lib['id'])
+        self.archive_status.setText('库内恢复资料：'+('已就绪' if state['writable'] and not state.get('pending') else state.get('error','只读')))
         self.path_label.setText(lib['path']);self.capacity.setText('读取中 · 正在读取磁盘与已登记文件');self.legend.setText('只读取登记文件大小，不扫描目录。')
         works=[w for w in data['works'] if w.get('library_id')==lib['id']]
         self.entries_heading.setText(f'项目 {len(works)}')
@@ -224,13 +239,15 @@ class StorageDialog(QDialog):
         with self._capacity_lock:
             self._capacity_closed=True;self._capacity_pending=None;self._cancel.set()
     def add(self):
-        path=QFileDialog.getExistingDirectory(self,'选择专用影片目录',options=QFileDialog.Option.DontUseNativeDialog)
-        if path:
-            try:self.ws.store.library(path);self.reload();self.ws.refresh(force=True);self.ws.add_controls.reload_libraries()
-            except Exception as error:message(self,error)
+        self.manager.add()
     def remove(self):
         if self.list.currentItem():
-            try:self.ws.store.remove_library(self.list.currentItem().data(Qt.ItemDataRole.UserRole));self.reload();self.ws.refresh(force=True)
+            key=self.list.currentItem().data(Qt.ItemDataRole.UserRole)
+            if self.manager.busy:message(self,'请先等待当前库操作结束。');return
+            data=self.ws.store.read();works={w['id'] for w in data['works'] if w.get('library_id')==key}
+            if any(self.ws.ep_active(e) for e in data['episodes'] if e['work_id'] in works):message(self,'请先暂停此库任务并等待停止。');return
+            if QMessageBox.question(self,'解除存储库挂载','仅从软件取消挂载，视频和库内恢复资料保留。以后可重新添加恢复。是否继续？')!=QMessageBox.StandardButton.Yes:return
+            try:self.ws.store.remove_library(key);self.reload();self.ws.refresh(force=True);self.ws.add_controls.reload_libraries()
             except Exception as error:message(self,error)
     def choose(self):
         path,_=QFileDialog.getOpenFileName(self,'选择外部播放器','','应用程序 (*.exe)')
@@ -279,7 +296,9 @@ class AddControls(QFrame):
             combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon);combo.setMinimumContentsLength(16)
     def reload_libraries(self):
         old=self.library.currentData();self.library.clear()
-        for lib in self.ws.store.read()['libraries']:self.library.addItem(lib['label']+'  ·  '+lib['path'],lib['id'])
+        try:data=self.ws.store.read()
+        except (ValueError,OSError):self.notice.setText('程序索引读取失败，请从管理库入口修复索引并重新添加已有库。');return
+        for lib in data['libraries']:self.library.addItem(lib['label']+'  ·  '+lib['path'],lib['id'])
         index=self.library.findData(old)
         if index>=0:self.library.setCurrentIndex(index)
     def receive(self,info):
@@ -433,7 +452,9 @@ class ImportDialog(QDialog):
 
 class Workspace(QObject):
     def __init__(self,window,legacy_content,old_shell):
-        super().__init__(window);self.window=window;self.store=Catalogue();self.jobs=Jobs(window);self.states={};self.current=None;self.fingerprint=None;self.cover_pending=set();self.check_pending=set();self.state_pending=False;self.last_scan=0
+        super().__init__(window);self.window=window;self.store=Catalogue();self.jobs=Jobs(window);self.states={};self.current=None;self.fingerprint=None;self.cover_pending=set();self.check_pending=set();self.state_pending=False;self.last_scan=0;self.index_error=''
+        try:self.store.read()
+        except (ValueError,OSError) as error:self.index_error=str(error)
         self.import_dialog=None;self.total_samples=0;self.closed=False;self.check_retry={};self.episode_page=0;self.episode_checked=set();self.refresh_pending=False;self.batch_preparing=False;self.batch_worker=False;self.batch_generation=0;self.prepared_batch=deque();self.task_artwork={};self.side_group_state={}
         self.add_dialog=QDialog(window);self.add_dialog.setWindowTitle('添加影片 · 解析与入库');self.add_dialog.resize(1020,850)
         self.add_dialog.setMinimumSize(780,600);layout=QVBoxLayout(self.add_dialog);scroll=QScrollArea();scroll.setWidgetResizable(True);legacy_content.setObjectName('addFilmContent');scroll.viewport().setObjectName('addFilmViewport');scroll.setWidget(legacy_content);layout.addWidget(scroll)
@@ -488,6 +509,7 @@ class Workspace(QObject):
         window.update_button.setObjectName('sideButton');left.addWidget(window.update_button);central.addWidget(sidebar)
         self.pages=QStackedWidget();central.addWidget(self.pages);central.setStretchFactor(1,1);central.setSizes([265,1135]);outer.addWidget(central,1)
         home=QWidget(objectName='libraryHome');body=QVBoxLayout(home);body.setContentsMargins(20,9,20,10);body.setSpacing(9)
+        self.library_warning=QLabel();self.library_warning.setWordWrap(True);self.library_warning.setStyleSheet('color:#e9bd79;padding:6px;');self.library_warning.hide();body.addWidget(self.library_warning)
         self.hero=Artwork();self.hero.hide()
         self.recent_label=QLabel('最近入库',objectName='shelfHeading');body.addWidget(self.recent_label)
         self.recent=QListWidget();self.recent.setObjectName('covers');self.recent.setViewMode(QListView.ViewMode.IconMode);self.recent.setFlow(QListView.Flow.LeftToRight);self.recent.setWrapping(False);self.recent.setMovement(QListView.Movement.Static);self.recent.setFixedHeight(257);self.recent.setGridSize(QSize(153,246));self.recent.setIconSize(QSize(140,210));self.recent.setItemDelegate(CoverDelegate(self.recent));self.recent.setHorizontalScrollMode(QListView.ScrollMode.ScrollPerPixel);self.recent.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -584,11 +606,16 @@ class Workspace(QObject):
     def refresh(self,force=False):
         if self.closed:return
         try:
-            data=self.store.read();self.refresh_task_artwork(data);fingerprint=(repr(data),self.search.text(),self.filter.currentIndex(),self.library_filter.currentData(),repr(self.states))
+            data=self.store.read();self.index_error='';self.refresh_task_artwork(data);fingerprint=(repr(data),self.search.text(),self.filter.currentIndex(),self.library_filter.currentData(),repr(self.states))
             if not force and fingerprint==self.fingerprint:return
             self.fingerprint=fingerprint;selected_lib=self.library_filter.currentData();self.library_filter.blockSignals(True);self.library_filter.clear();self.library_filter.addItem('全部存储库',None)
             for lib in data['libraries']:self.library_filter.addItem(lib['label'],lib['id'])
             self.library_filter.setCurrentIndex(max(0,self.library_filter.findData(selected_lib)));self.library_filter.blockSignals(False)
+            problems=[]
+            for lib in data['libraries']:
+                state=self.store.library_status(lib['id'])
+                if state.get('pending') or state['state']=='needs_online_confirmation':problems.append(lib['label']+'：'+state['error'])
+            self.library_warning.setText('\n'.join(problems));self.library_warning.setVisible(bool(problems))
             for i in range(self.side_titles.topLevelItemCount()):
                 group=self.side_titles.topLevelItem(i);self.side_group_state[group.text(0).split(' (')[0]]=group.isExpanded()
             term=self.search.text().strip().casefold();self.tiles.clear();self.recent.clear();self.side_titles.clear();self.side_items={};shown=[];side_groups={}
@@ -614,7 +641,8 @@ class Workspace(QObject):
             if self.current:
                 self.render_work()
                 if self.current in self.side_items:self.side_titles.setCurrentItem(self.side_items[self.current])
-        except Exception as error:self.empty.setText('影片库读取失败：'+str(error));diagnostics.event('library.refresh.failed',str(error))
+        except Exception as error:
+            self.index_error=str(error);self.empty.setText('影片库读取失败：'+str(error)+'\n请从管理 → 存储库与播放器修复程序索引，再添加已有库。');self.empty.show();diagnostics.event('library.refresh.failed',str(error))
 
     def show_work(self,key):
         if self.current!=key:self.episode_page=0;self.episode_checked.clear();self.episode_search.blockSignals(True);self.episode_search.clear();self.episode_search.blockSignals(False)
@@ -641,6 +669,8 @@ class Workspace(QObject):
         for source in work['sources']:self.source.addItem(source['site']+' · '+source['work_key']+(' · 线路'+str(source['variant']) if source.get('variant') else ''),source['key'])
         self.source.setCurrentIndex(max(0,self.source.findData(work.get('default_source'))));self.source.blockSignals(False)
         lib=next((v for v in data['libraries'] if v['id']==work.get('library_id')),None)
+        writable=self.store.library_status(lib['id'])['writable'] if lib else True
+        self.download_missing.setEnabled(writable);self.source.setEnabled(writable);self.check_enabled.setEnabled(writable);self.check_hours.setEnabled(writable)
         self.season_info.setText(('存储库：'+lib['label'] if lib else '外部文件／未指定存储库')+(f" · 发现 {work['new_count']} 个新集" if work.get('new_count') else ''))
         filtered=self.filtered_episodes();pages=max(1,(len(filtered)+49)//50);self.episode_page=max(0,min(self.episode_page,pages-1))
         self.page_label.setText(f'第 {self.episode_page+1} / {pages} 页 · {len(filtered)} 集 · 已选 {len(self.episode_checked)}')
@@ -655,7 +685,7 @@ class Workspace(QObject):
             for col,value in [(1,state),(2,'; '.join(('外部文件：' if f['external'] else '')+f['path'] for f in ep['files']) or ', '.join(s['site'] for s in ep['sources']))]:
                 cell=QTableWidgetItem(value);cell.setFlags(cell.flags()&~Qt.ItemFlag.ItemIsEditable);cell.setToolTip(value);self.episodes.setItem(i,col,cell)
             button=QPushButton('▶ 播放' if state=='已下载' and any(f['kind']=='video' for f in ep['files']) else '打开原图目录' if state=='已下载' and any(f['kind']=='images' for f in ep['files']) else '↓ 下载')
-            button.clicked.connect(lambda _,eid=ep['id']:self.episode_action(eid));button.setEnabled(not active and state not in ('磁盘离线','存储库离线'));self.episodes.setCellWidget(i,3,button)
+            button.clicked.connect(lambda _,eid=ep['id']:self.episode_action(eid));button.setEnabled(not active and state not in ('磁盘离线','存储库离线') and (writable or state=='已下载'));self.episodes.setCellWidget(i,3,button)
             manage=QPushButton('···');manage.clicked.connect(lambda _,eid=ep['id']:self.manage_episode(eid));self.episodes.setCellWidget(i,4,manage)
         self.episodes.blockSignals(False)
 
@@ -784,6 +814,8 @@ class Workspace(QObject):
         if not work['no_play_prompt']:
             dialog=QMessageBox(self.window);dialog.setWindowTitle('播放此选集？');dialog.setText(work['title']+' '+work['season']+' · '+ep['label']);dialog.setInformativeText('使用系统默认或设置中指定的外部播放器打开本地视频。')
             check=QCheckBox('播放本季其他选集时不再提示' if work['season'] else '播放此作品时不再提示');dialog.setCheckBox(check);dialog.setStandardButtons(QMessageBox.StandardButton.Ok|QMessageBox.StandardButton.Cancel)
+            if work.get('library_id') and not self.store.library_status(work['library_id'])['writable']:
+                check.setEnabled(False);check.setToolTip('当前库只读，仍可播放，但不能保存播放偏好。')
             if dialog.exec()!=QMessageBox.StandardButton.Ok:return
             if check.isChecked():self.store.patch_work(work['id'],no_play_prompt=True)
         import preferences
@@ -814,9 +846,13 @@ class Workspace(QObject):
             self.fingerprint=None
         except Exception as error:message(self.window,error)
     def source_changed(self):
-        if self.current and self.source.currentData():self.store.patch_work(self.current,default_source=self.source.currentData())
+        if self.current and self.source.currentData():
+            try:self.store.patch_work(self.current,default_source=self.source.currentData())
+            except (OSError,ValueError) as error:message(self.window,error)
     def save_checks(self):
-        if self.current:self.store.patch_work(self.current,check_enabled=self.check_enabled.isChecked(),check_hours=self.check_hours.value())
+        if self.current:
+            try:self.store.patch_work(self.current,check_enabled=self.check_enabled.isChecked(),check_hours=self.check_hours.value())
+            except (OSError,ValueError) as error:message(self.window,error)
     def remove_work(self):
         if self.batch_preparing:message(self.window,'批量任务正在准备，请先等待或取消准备。');return
         if self.unfinished(self.current):message(self.window,'本季还有未完成任务，请先在下载任务中完成或取消，再移除库记录。');return
@@ -835,7 +871,9 @@ class Workspace(QObject):
 
     def cache_covers(self,key,force=False):
         if key in self.cover_pending:return
-        work=self.store.work(key);self.cover_pending.add(key)
+        work=self.store.work(key)
+        if work.get('library_id') and not self.store.library_status(work['library_id'])['writable']:return
+        self.cover_pending.add(key)
         def fetch(cancel):
             from library_assets import image_file
             result={}
@@ -885,19 +923,33 @@ class Workspace(QObject):
         if self.closed:return
         if not hasattr(self,'check_retry'):self.check_retry={}
         stats=self.window.queue.statistics();self.trend.add(stats['speed']);self.total_samples+=1
+        if self.index_error:return
         if self.total_samples%3==0 and not self.state_pending:
             self.state_pending=True
             def scan(cancel):
                 self.store.sync(tasks.records());data=self.store.read()
                 return {e['id']:self.store.file_state(e,data) if e.get('files') else e['status'] for e in data['episodes']}
             def done(states):self.state_pending=False;self.states=states;self.refresh()
-            self.jobs.start(scan,done,lambda e:(setattr(self,'state_pending',False),diagnostics.event('library.state.failed',e)))
+            def failed(error):
+                self.state_pending=False;diagnostics.event('library.state.failed',error)
+                self.library_warning.setText('视频文件保留，恢复资料未保存：'+str(error)+'\n请打开管理 → 存储库与播放器，重试保存资料。');self.library_warning.show()
+            self.jobs.start(scan,done,failed)
         if self.total_samples%60==0:
             if self.window.is_busy():return
             for work in self.store.read()['works']:
                 if work['check_enabled'] and time.time()-work['checked_at']>=work.get('check_hours',24)*3600 and time.time()>self.check_retry.get(work['id'],0):self.refresh_season(work['id'],True)
     def shutdown(self):
-        self.closed=True;self.cancel_batches();self.timer.stop();return self.jobs.shutdown()
+        self.closed=True;self.cancel_batches();self.timer.stop()
+        done=self.jobs.shutdown()
+        if done:
+            try:
+                if not self.index_error:
+                    for lib in self.store.read()['libraries']:
+                        state=self.store.library_status(lib['id'])
+                        if state['writable']:self.store.persist_library(lib['id'])
+            except (ValueError,OSError) as error:diagnostics.event('library.shutdown.unsaved',str(error))
+            self.store.close()
+        return done
 
 
 def install(window,content,old):return Workspace(window,content,old)

@@ -1,5 +1,5 @@
 """Self describing, validated library records. No network or media deletion."""
-import copy,hashlib,json,os,uuid,stat,threading,time
+import copy,hashlib,json,os,uuid,stat,threading,time,re
 from functools import wraps
 from pathlib import Path
 from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
@@ -37,13 +37,22 @@ def web_url(value):
   p=urlsplit(value)
   if p.scheme not in ('http','https') or not p.hostname:return ''
   if p.path.lower().endswith(('.m3u8','.mp4','.ts','.mpd')):return ''
-  query=[(k,v) for k,v in parse_qsl(p.query,keep_blank_values=True) if not any(s in k.lower() for s in ('token','auth','cookie','signature','session','secret','expire','credential','password'))]
+  stable={'id','vid','bvid','aid','cid','season_id','episode_id','ep_id','p','v','tvid','albumid'}
+  query=[(k,v) for k,v in parse_qsl(p.query,keep_blank_values=True) if k.lower() in stable and not re.search(r'https?://',v,re.I)]
   return urlunsplit((p.scheme,p.hostname+(':'+str(p.port) if p.port else ''),p.path,urlencode(query),''))
  except ValueError:return ''
 
 def sanitize(value):
- if isinstance(value,dict):return {k:(web_url(v) if k.endswith('url') and isinstance(v,str) else sanitize(v)) for k,v in value.items() if not any(s in k.lower() for s in ('cookie','token','password','headers','authorization'))}
+ if isinstance(value,dict):
+  result={}
+  for k,v in value.items():
+   if '://' not in k and any(s in k.lower() for s in ('cookie','token','password','headers','authorization')):continue
+   key=sanitize(k)
+   if key in result:raise ValueError('规范化来源身份发生冲突，请核对来源。')
+   result[key]=web_url(v) if k.endswith('url') and isinstance(v,str) else sanitize(v)
+  return result
  if isinstance(value,list):return [sanitize(v) for v in value]
+ if isinstance(value,str) and re.search(r'https?://',value):return re.sub(r'https?://[^\s|]+',lambda match:web_url(match.group()),value)
  return value
 
 def encode(payload):return {'format':FORMAT,'payload':payload,'sha256':hashlib.sha256(canonical(payload)).hexdigest()}

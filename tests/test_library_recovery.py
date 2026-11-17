@@ -1,4 +1,4 @@
-import os,tempfile,unittest
+import os,tempfile,unittest,json
 from pathlib import Path
 from unittest.mock import patch
 from media_library import Catalogue
@@ -289,3 +289,12 @@ class Recovery(unittest.TestCase):
    future=json.dumps({'format':100}).encode();current.write_bytes(future)
    with self.assertRaises(ValueError):c.retry_persist(lib)
    self.assertEqual(current.read_bytes(),future);c.close()
+
+ def test_portable_sources_strip_unrecognized_credentials_even_from_url_identity_keys(self):
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c=Catalogue();lib=c.library(root/'media');url='https://example.org/watch?vid=314&p=2&access_key=PRIVATE_KEY&sig=PRIVATE_SIG&jwt=PRIVATE_JWT&api_key=PRIVATE_API&url=https%3A%2F%2Fcdn.test%2Fx.m3u8%3Ftoken%3DPRIVATE_CDN';wid,eids=c.ingest({'site':'demo','key':url,'url':url,'entries':[{'key':url,'title':'one','url':url}]},'Title','',lib);c.patch_work(wid,check_hours=5)
+   records=list((root/'media/.wvd-library').rglob('*.json'))
+   for record in records:
+    text=record.read_text(encoding='utf-8');self.assertNotIn('PRIVATE_',text,str(record))
+    if json.loads(text)['payload']['works']:self.assertIn('vid=314',text);self.assertIn('p=2',text)
+   c.close();c.path.unlink();fresh=Catalogue();fresh.mount_library(root/'media');work=fresh.work(wid);self.assertEqual(work['sources'][0]['url'],'https://example.org/watch?vid=314&p=2');self.assertEqual(fresh.episode(eids[0])['sources'][0]['key'],work['sources'][0]['work_key']);self.assertEqual(work['sources'][0]['mapping'],{'https://example.org/watch?vid=314&p=2':eids[0]});fresh.close()

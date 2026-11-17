@@ -76,6 +76,11 @@ def move_library(store,libid,destination,cancel=lambda:False,progress=lambda dat
         source=safe_folder(next(v['path'] for v in store.read()['libraries'] if v['id']==libid))
         dest=safe_folder(dest);result.update(source=str(source),destination=str(dest))
         if source==dest or source.is_relative_to(dest) or dest.is_relative_to(source):raise ValueError('源库与目标目录不能相同或互相嵌套。')
+        for lib in store.read()['libraries']:
+            if lib['id']==libid:continue
+            other=safe_folder(lib['path'])
+            if any(root==other or root.is_relative_to(other) or other.is_relative_to(root) for root in (source,dest)):
+                raise ValueError('迁移目录不能与其他存储库相同或嵌套：'+str(other))
         if (source/_JOURNAL).exists():raise ValueError('源库存在未完成迁移标记，请先检查保留的迁移目录。')
         if not source.is_dir():raise ValueError('源库存储目录不可用。')
         if not store.library_status(libid)['writable']:raise ValueError(store.library_status(libid)['error'])
