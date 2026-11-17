@@ -1,6 +1,10 @@
 # Build a portable folder so the media tools and browser runtime stay replaceable.
 from pathlib import Path
 import json
+import sys
+sys.path.insert(0, str(Path(SPECPATH)))
+from build_guard import check_output
+check_output(Path(DISTPATH) / "WebVideoDownloader")
 from PyInstaller.utils.hooks import collect_submodules
 
 root = Path(SPECPATH)
@@ -52,6 +56,7 @@ exe = EXE(
     disable_windowed_traceback=False,
     version=str(root / "version_info.txt"),
 )
+check_output(Path(DISTPATH) / "WebVideoDownloader")
 collection = COLLECT(
     exe,
     analysis.binaries,
