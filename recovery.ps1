@@ -53,6 +53,9 @@ function Metadata($Descriptor,$Name){if($Descriptor.size -gt 2097152){throw 'Met
 function ProgramPath($Folder,$Name){
     if($Name -notmatch '^(WebVideoDownloader\.exe|README\.md|LICENSES\.md|_internal/.+)$' -or $Name -match '\\|:|\x00'){throw 'Unsafe program path.'}
     foreach($part in $Name.Split('/')){if($part -in @('','.','..') -or $part -match '[ .]$'){throw 'Unsafe path.'}}
+    foreach($part in $Name.Split('/')){if($part -match '^(?i:data|\.wvd|\.wvd-library|\.portable-data\.json|library\.json|settings\.json|tasks\.json|queue\.json|sessions\.json|library\.db|catalogue\.json|sessions\.dpapi|download-tasks|adapted-sites\.json)$|^(?i:\.wvd-|\.video-downloader-)|(?i:\.(mp4|mkv|avi|mov|webm|m4v|part|srt|ass|mp3|flac))$|^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)'){throw 'User data or media path rejected.'}}
+    $playwrightTypes=@('_internal/playwright/driver/package/index.d.ts','_internal/playwright/driver/package/types/protocol.d.ts','_internal/playwright/driver/package/types/structs.d.ts','_internal/playwright/driver/package/types/types.d.ts')
+    if($Name -match '(?i:\.ts)$' -and -not $Name.StartsWith('_internal/vendor/cctv-h5e-decrypt/') -and $Name -cnotin $playwrightTypes){throw 'User media path rejected.'}
     $full=[IO.Path]::GetFullPath((Join-Path $Folder $Name));$base=[IO.Path]::GetFullPath($Folder).TrimEnd('\')
     if(-not $full.StartsWith($base+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Path escape.'}
     $cursor=$full;while($cursor -and $cursor -ne $base){if(([IO.File]::Exists($cursor) -or [IO.Directory]::Exists($cursor)) -and ([IO.File]::GetAttributes($cursor) -band [IO.FileAttributes]::ReparsePoint)){throw 'Link rejected.'};$cursor=[IO.Path]::GetDirectoryName($cursor)}
@@ -88,12 +91,31 @@ try{
         $folder=[IO.Path]::GetFullPath($info.folder)
         if((Split-Path -Parent $folder) -ne (Split-Path -Parent $root) -or -not (Split-Path -Leaf $folder).StartsWith((Split-Path -Leaf $root)+'.backup-')){throw 'Unsafe backup location.'}
         $marker=Get-Content -LiteralPath (Join-Path $folder 'backup-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        if($marker.application -ne 'WebVideoDownloader' -or $marker.install_dir -ne $root -or $marker.token -ne $info.token){throw 'Backup ownership mismatch.'}
+        if($marker.application -ne 'WebVideoDownloader' -or $marker.install_dir -ne $root -or $marker.token -ne $info.token -or $marker.token -notmatch '^[a-f0-9]{32}$'){throw 'Backup ownership mismatch.'}
         $targetFile=Join-Path $folder 'inventory.json';$target=Get-Content -LiteralPath $targetFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $owned=$null
+        if($null -eq $marker.format){if(@($marker.PSObject.Properties).Count -ne 4 -or $null -ne $marker.owned_files -or $null -ne $marker.inventory_sha256){throw 'Unknown backup metadata.'}}
+        elseif($marker.format -ceq 'partial-v1'){
+            if(@($marker.PSObject.Properties).Count -ne 7 -or (Sha $targetFile) -ne $marker.inventory_sha256 -or $null -eq $marker.owned_files -or @($marker.owned_files).Count -gt 20001){throw 'Invalid partial backup.'}
+            $owned=@{}
+            foreach($row in $marker.owned_files){
+                $null=ProgramPath $folder $row.path
+                if($owned.ContainsKey($row.path) -or $row.sha256 -notmatch '^[a-f0-9]{64}$' -or $null -eq $row.size -or $row.size -lt 0 -or $row.size -gt 8589934592 -or @($row.PSObject.Properties).Count -ne 3){throw 'Invalid backup entry.'}
+                $owned[$row.path]=$true
+            }
+        }else{throw 'Unknown backup format.'}
+        if($target.application -ne 'WebVideoDownloader' -or $target.schema -ne 2 -or $target.version -ne $info.version -or $target.version -ne $marker.version -or @($target.files).Count -lt 1 -or @($target.files).Count -gt 20000){throw 'Invalid backup inventory.'}
         $cachedCatalog=Join-Path $updates 'release-catalog.json'
         if(Test-Path -LiteralPath $cachedCatalog){$known=Get-Content -LiteralPath $cachedCatalog -Raw -Encoding UTF8 | ConvertFrom-Json;if($target.version -in $known.revoked_versions){throw 'This backup version was revoked.'}}
         if($target.data_schema -ne $base.data_schema){throw 'Backup data version is incompatible.'}
-        foreach($row in $target.files){$from=ProgramPath $folder $row.path;if((Sha $from) -ne $row.sha256){throw 'Local backup is damaged; use online repair.'};$to=ProgramPath $payload $row.path;$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($to));[IO.File]::Copy($from,$to,$true)}
+        $seen=@{}
+        foreach($row in $target.files){
+            if($seen.ContainsKey($row.path) -or $row.path -eq '_internal/installation.json' -or $row.sha256 -notmatch '^[a-f0-9]{64}$' -or $row.size -lt 0 -or $row.size -gt 8589934592){throw 'Invalid backup inventory entry.'};$seen[$row.path]=$true
+            $source=$folder;if($null -ne $owned -and -not $owned.ContainsKey($row.path)){$source=$root}
+            $from=ProgramPath $source $row.path
+            if(-not [IO.File]::Exists($from) -or ([IO.FileInfo]$from).Length -ne $row.size -or (Sha $from) -ne $row.sha256){throw 'Local backup or unchanged program is damaged; use online repair.'}
+            $to=ProgramPath $payload $row.path;$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($to));[IO.File]::Copy($from,$to,$true)
+        }
     }else{
         $request=[Net.HttpWebRequest]::Create('https://github.com/masteryanai/web-vedio-downloader/releases/latest');$request.UserAgent='WebVideoDownloader-Recovery';$request.Timeout=15000
         $response=$request.GetResponse();$location=$response.ResponseUri.AbsoluteUri;$response.Dispose()

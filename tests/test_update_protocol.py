@@ -25,8 +25,8 @@ def write(root,name,body):
 class UpdateProtocol(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.install=self.root/'app';self.new=self.root/'new'
-        write(self.install,'WebVideoDownloader.exe',b'old');write(self.install,'_internal/runtime.dll',b'fixed');write(self.install,'_internal/deleted.dat',b'deleted')
-        write(self.new,'WebVideoDownloader.exe',b'new');write(self.new,'_internal/runtime.dll',b'fixed');write(self.new,'_internal/added.dat',b'added')
+        write(self.install,'WebVideoDownloader.exe',b'old');write(self.install,'_internal/runtime.dll',b'fixed'*200000);write(self.install,'_internal/deleted.dat',b'deleted')
+        write(self.new,'WebVideoDownloader.exe',b'new');write(self.new,'_internal/runtime.dll',b'fixed'*200000);write(self.new,'_internal/added.dat',b'added')
         self.base=protocol.tree_inventory(self.install,'0.8.0');self.target=protocol.tree_inventory(self.new,'0.9.0')
         write(self.install,protocol.INSTALLATION,protocol.canonical(self.base));self.cancel=threading.Event()
         self.user_sentinels={name:(b'{"sentinel":true}' if name.endswith('.json') else ('private:'+name).encode()) for name in ('data/library.json','data/settings.json','data/tasks.json','data/covers/cover.jpg','.wvd-library/manifest.json','.wvd-library/history/previous.json','media/episode.mp4','media/subtitle.srt')}
@@ -103,11 +103,17 @@ class UpdateProtocol(unittest.TestCase):
         self.assertTrue(protocol.verify_tree(self.install,self.target)[0]);self.assertFalse((self.install/'_internal/deleted.dat').exists())
         self.assertEqual((self.install/'_internal/custom.txt').read_bytes(),b'private')
         index=packages.backup_info(self.install);self.assertIsNotNone(index)
+        self.assertFalse((Path(index['folder'])/'_internal/runtime.dll').exists())
+        self.assertFalse((Path(index['folder'])/'settings-before-update.json').exists())
+        marker=json.loads((Path(index['folder'])/'backup-info.json').read_text(encoding='utf-8-sig'))
+        self.assertEqual(marker['format'],'partial-v1')
         unknown=write(Path(index['folder']),'user-keep.txt',b'user backup note')
+        unowned=write(Path(index['folder']),'_internal/runtime.dll',b'unowned backup sentinel')
         result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'recovery.ps1'),'-InstallDir',str(self.install),'-Action','restore','-NoLaunch'],capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr);self.assertTrue(protocol.verify_tree(self.install,self.base)[0])
         state=self.root/'data'/'WebVideoDownloaderPrototype'/'updates'
         self.assertEqual(Path(json.loads((state/'last-install.json').read_text(encoding='utf-8-sig'))['stage']).parent,self.install/'update')
+        self.assertEqual(unowned.read_bytes(),b'unowned backup sentinel')
         self.assertEqual(unknown.read_bytes(),b'user backup note');self.assertFalse((unknown.parent/'backup-info.json').exists())
         self.assertEqual((self.install/'_internal/custom.txt').read_bytes(),b'private')
         self.assertTrue((self.root/'data'/'WebVideoDownloaderPrototype'/'updates'/'state.json').exists())
@@ -134,6 +140,69 @@ class UpdateProtocol(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stdout+result.stderr);self.assertTrue((portable/'updates/last-install.json').exists())
         after={p.relative_to(old).as_posix():protocol.digest(p) for p in old.rglob('*') if p.is_file()};self.assertEqual(before,after)
 
+    @unittest.skipUnless(os.name=='nt','Windows local backup')
+    def test_partial_backup_local_payload_reuses_verified_install_and_rejects_unknown_format(self):
+        result,report=self.run_install();self.assertEqual(result.returncode,0,report)
+        info={'version':'0.8.0','operation':'rollback','rollback_allowed':True,'local_restore':True,'manifest':{}}
+        with patch('update_package.APP_VERSION','0.9.0'),patch('update_pending.APP_VERSION','0.9.0'),patch('sys.frozen',True,create=True),patch('sys.executable',str(self.install/'WebVideoDownloader.exe')):
+            prepared=packages.prepare(info,self.cancel,lambda _:None)
+        plan=json.loads(Path(prepared['plan']).read_text(encoding='utf-8'))
+        self.assertTrue(protocol.verify_tree(plan['payload_dir'],self.base)[0])
+        markerfile=Path(report['backup'])/'backup-info.json'
+        marker=json.loads(markerfile.read_text(encoding='utf-8-sig'));marker['format']='future';markerfile.write_text(json.dumps(marker))
+        self.assertIsNone(packages.backup_info(self.install))
+        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'recovery.ps1'),'-InstallDir',str(self.install),'-Action','restore','-NoLaunch'],capture_output=True,text=True,timeout=30)
+        self.assertNotEqual(result.returncode,0)
+        self.assertTrue(protocol.verify_tree(self.install,self.target)[0])
+        marker['format']='partial-v1';markerfile.write_text(json.dumps(marker))
+        plan['pid']=0;Path(prepared['plan']).write_bytes(protocol.canonical(plan))
+        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'update_install.ps1'),'-Plan',prepared['plan'],'-NoLaunch'],capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertTrue(protocol.verify_tree(self.install,self.base)[0])
+
+    @unittest.skipUnless(os.name=='nt','Windows partial restore verification')
+    def test_partial_backup_rejects_damaged_unchanged_dll_for_both_restore_paths(self):
+        result,report=self.run_install();self.assertEqual(result.returncode,0,report)
+        write(self.install,'_internal/runtime.dll',b'damaged current DLL')
+        backup=packages.backup_info(self.install)
+        with self.assertRaises(ValueError):packages.backup_sources(backup)
+        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'recovery.ps1'),'-InstallDir',str(self.install),'-Action','restore','-NoLaunch'],capture_output=True,text=True,timeout=30)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual((self.install/'WebVideoDownloader.exe').read_bytes(),b'new')
+        self.assertEqual((self.install/'_internal/runtime.dll').read_bytes(),b'damaged current DLL')
+
+    @unittest.skipUnless(os.name=='nt','Windows legacy full restore')
+    def test_legacy_full_backup_still_restores_offline(self):
+        result,report=self.run_install();self.assertEqual(result.returncode,0,report)
+        folder=Path(report['backup']);shutil.copy2(self.install/'_internal/runtime.dll',folder/'_internal/runtime.dll')
+        markerfile=folder/'backup-info.json';marker=json.loads(markerfile.read_text(encoding='utf-8-sig'))
+        for key in ('format','owned_files','inventory_sha256'):marker.pop(key)
+        markerfile.write_text(json.dumps(marker))
+        backup=packages.backup_info(self.install);self.assertIsNotNone(backup)
+        self.assertEqual(len(packages.backup_sources(backup)),len(self.base['files']))
+        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'recovery.ps1'),'-InstallDir',str(self.install),'-Action','restore','-NoLaunch'],capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertTrue(protocol.verify_tree(self.install,self.base)[0])
+
+    @unittest.skipUnless(os.name=='nt','Windows original bytes restore')
+    def test_damaged_actual_original_is_backed_up_and_failure_restores_it(self):
+        write(self.install,'_internal/runtime.dll',b'actual damaged original')
+        result,report=self.run_install(fail=2);self.assertEqual(result.returncode,1,report)
+        self.assertEqual((self.install/'_internal/runtime.dll').read_bytes(),b'actual damaged original')
+        self.assertEqual((Path(report['backup'])/'_internal/runtime.dll').read_bytes(),b'actual damaged original')
+        self.assertEqual((self.install/'WebVideoDownloader.exe').read_bytes(),b'old')
+
+    @unittest.skipUnless(os.name=='nt','Windows owned backup cleanup')
+    def test_compact_cleanup_keeps_unowned_and_changed_owned_files(self):
+        result,report=self.run_install();self.assertEqual(result.returncode,0,report)
+        folder=Path(report['backup'])
+        unknown=write(folder,'_internal/runtime.dll',b'unowned backup sentinel')
+        changed=write(folder,'WebVideoDownloader.exe',b'user changed backup')
+        result,second=self.run_install(fail=-1);self.assertEqual(result.returncode,0,second)
+        self.assertEqual(unknown.read_bytes(),b'unowned backup sentinel')
+        self.assertEqual(changed.read_bytes(),b'user changed backup')
+        self.assertTrue((folder/'backup-info.json').exists())
+
     @unittest.skipUnless(os.name=='nt','Windows compatibility')
     def test_incompatible_old_layout_backup_is_not_offered(self):
         result,report=self.run_install();self.assertEqual(result.returncode,0,report)
@@ -146,6 +215,7 @@ class UpdateProtocol(unittest.TestCase):
     def test_transaction_failure_restores_every_touched_file(self):
         result,report=self.run_install(fail=2);self.assertEqual(result.returncode,1);self.assertFalse(report['ok']);self.assertFalse(report['restore_error']);self.assertIn('Injected',report['error'])
         self.assertTrue(protocol.verify_tree(self.install,self.base)[0]);self.assertFalse((self.install/'_internal/added.dat').exists())
+        self.assertFalse((Path(report['backup'])/'_internal/runtime.dll').exists())
     @unittest.skipUnless(os.name=='nt','Windows repair')
     def test_repair_preserves_all_user_sentinels(self):
         result,report=self.run_install(operation='repair');self.assertEqual(result.returncode,0,report)
