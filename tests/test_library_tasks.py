@@ -105,3 +105,54 @@ class RestoredEngineTests(unittest.TestCase):
                     engine.download_video(info,'hd',base/'lib',task_id=task['id'])
                 self.assertEqual(piece.read_bytes(),b'not a full media file')
                 self.assertEqual(list((base/'lib').glob('*.mp4')),[])
+
+class RestoreTransactionTests(unittest.TestCase):
+    def test_external_commit_failure_rolls_back_exact_checkpoint_and_clone_cache(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder);old=base/'old';new=base/'new';old.mkdir()
+            with patch.dict(os.environ,WVD_DATA_DIR=str(base/'data')):
+                task=tasks.create({'url':'https://example.com/watch','site':'example','title':'T'},'hd',old)
+                task.update(library_episode='e');tasks.save(task)
+                cache=tasks.work_path(task);cache.mkdir();(cache/'piece.part').write_bytes(b'prefix')
+                rows=library_tasks.snapshot_tasks('lib',old,{'works':[{'id':'w','library_id':'lib'}],'episodes':[{'id':'e','work_id':'w','task_ids':[task['id']]}]})
+                shutil.copytree(old,new);newid='d'*32;path=tasks.task_file(newid)
+                with self.assertRaisesRegex(RuntimeError,'archive failed'):
+                    with library_tasks.restore_transaction(rows,new,{task['id']:newid}) as mapping:
+                        self.assertTrue(tasks.task_file(newid).exists())
+                        self.assertTrue((new/('.video-downloader-'+newid)/'piece.part').exists())
+                        with self.assertRaises(RuntimeError):
+                            with tasks.lock(newid):pass
+                        raise RuntimeError('archive failed')
+                self.assertFalse(tasks.task_file(newid).exists())
+                self.assertEqual((new/cache.name/'piece.part').read_bytes(),b'prefix')
+                self.assertEqual((cache/'piece.part').read_bytes(),b'prefix')
+
+    def test_unbound_paused_task_output_moves_and_checkpoint_rollback_is_exact(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder);old=base/'old';new=base/'new';old.mkdir()
+            with patch.dict(os.environ,WVD_DATA_DIR=str(base/'data')):
+                task=tasks.create({'url':'https://example.com/watch','site':'example','title':'T'},'hd',old/'season')
+                rows=library_tasks.snapshot_tasks('lib',old,{'works':[],'episodes':[]})
+                self.assertEqual(len(rows),1)
+                path=tasks.task_file(task['id']);original=path.read_bytes()+b'\n';path.write_bytes(original)
+                old.rename(new)
+                with self.assertRaises(RuntimeError):
+                    with library_tasks.restore_transaction(rows,new,{task['id']:task['id']}):raise RuntimeError('index failed')
+                self.assertEqual(path.read_bytes(),original)
+                library_tasks.restore_tasks(rows,new,{task['id']:task['id']})
+                self.assertEqual(tasks.load(task['id'])['output'],str(new/'season'))
+
+    @unittest.skipUnless(os.name=='nt','Windows directory junction behavior')
+    def test_junction_in_output_is_rejected_without_writing_outside(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder);root=base/'lib';outside=base/'outside';root.mkdir();outside.mkdir();link=root/'linked'
+            subprocess.run(['cmd','/c','mklink','/J',str(link),str(outside)],check=True,capture_output=True)
+            try:
+                with patch.dict(os.environ,WVD_DATA_DIR=str(base/'data')):
+                    row={'id':'d'*32,'url':'https://example.com/watch','site':'s','title':'T','format_id':'hd','state':'paused','output':{'kind':'relative','path':'linked/sub'},'cache':{'kind':'relative','path':'linked/sub/.video-downloader-'+('d'*32)}}
+                    with self.assertRaises(ValueError):library_tasks.restore_tasks([row],root,{})
+                    self.assertEqual(list(outside.iterdir()),[])
+                    self.assertFalse(tasks.task_file('d'*32).exists())
+            finally:link.rmdir()

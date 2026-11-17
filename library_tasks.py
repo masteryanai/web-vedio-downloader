@@ -1,7 +1,6 @@
 """Portable, credential-free download task references for a storage library."""
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import math
-import json
 from pathlib import Path
 import re
 import uuid
@@ -14,7 +13,9 @@ _NUMBERS={'created_at','finished_at','download_percent','downloaded_bytes','tota
 def _safe(path):
     path=Path(path).absolute()
     for part in (path,*path.parents):
-        if part.is_symlink() or part.exists() and getattr(part.stat(),'st_file_attributes',0)&1024:
+        try:info=part.lstat()
+        except FileNotFoundError:continue
+        if part.is_symlink() or getattr(info,'st_file_attributes',0)&1024:
             raise ValueError('任务路径不能经过符号链接或目录联接。')
     return path.resolve()
 
@@ -61,17 +62,24 @@ def snapshot_tasks(libid,root,context):
     works={w['id'] for w in context.get('works',[]) if w.get('library_id')==libid}
     episodes={e['id']:e for e in context.get('episodes',[]) if e.get('work_id') in works}
     ids={t:eid for eid,e in episodes.items() for t in e.get('task_ids',[e.get('task_id')]) if t}
+    # Legacy downloads may predate episode binding; their output still belongs to this root.
+    for task in tasks.records():
+        if task['id'] not in ids and not task.get('library_episode') and task['state'] not in tasks.TERMINAL:
+            if _safe(task['output']).is_relative_to(root):ids[task['id']]=None
     rows=[]
     for taskid,eid in ids.items():
         try:task=tasks.load_record(taskid)
         except FileNotFoundError:continue
-        row=_public(task);row.update(id=taskid,library_episode=eid,output=_ref(task['output'],root),cache=_ref(tasks.work_path(task),root))
+        row=_public(task)
+        if eid:row['library_episode']=eid
+        row.update(id=taskid,output=_ref(task['output'],root),cache=_ref(tasks.work_path(task),root))
         result=task.get('result')
         if isinstance(result,dict) and isinstance(result.get('path'),str):row['result']={'path':_ref(result['path'],root)}
         rows.append(row)
     return rows
 
-def restore_tasks(rows,root,identity_map):
+@contextmanager
+def restore_transaction(rows,root,identity_map):
     root=_safe(root);prepared=[];mapping={};seen=set();renames=[]
     for row in rows:
         if not isinstance(row,dict):raise ValueError('任务资料无效。')
@@ -116,10 +124,15 @@ def restore_tasks(rows,root,identity_map):
             for task in prepared:
                 path=tasks.task_file(task['id']);original[path]=path.read_bytes() if path.exists() else None
                 tasks.save(task)
+            yield mapping
         except BaseException:
             for path,data in original.items():
                 if data is None:path.unlink(missing_ok=True)
-                else:tasks.write_checkpoint(path,json.loads(data))
+                else:tasks.write_checkpoint_bytes(path,data)
             for src,dst in reversed(done):dst.rename(src)
             raise
-    return mapping
+
+
+def restore_tasks(rows,root,identity_map):
+    with restore_transaction(rows,root,identity_map) as mapping:
+        return mapping
