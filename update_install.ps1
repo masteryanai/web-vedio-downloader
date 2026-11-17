@@ -81,7 +81,7 @@ function Sha([string]$File) { $stream=[IO.File]::OpenRead($File);$algorithm=[Sec
 function Safe([string]$Folder,[string]$Name) {
     if ($Name -match '\\|:|\x00' -or $Name -notmatch '^(WebVideoDownloader\.exe|README\.md|LICENSES\.md|_internal/.+)$') {throw 'Non-program path.'}
     foreach($part in $Name.Split('/')) {if ($part -in @('','.','..') -or $part -match '[ .]$|^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)') {throw 'Unsafe path.'}}
-    foreach($part in $Name.Split('/')) {if ($part -match '^(?i:data|\.wvd|\.wvd-library|\.portable-data\.json|library\.json|settings\.json|tasks\.json|queue\.json|sessions\.json|library\.db)$|^(?i:\.wvd-|\.video-downloader-)|(?i:\.(mp4|mkv|avi|mov|webm|m4v|part|srt|ass|mp3|flac))$') {throw 'User data or media path rejected.'}}
+    foreach($part in $Name.Split('/')) {if ($part -match '^(?i:data|\.wvd|\.wvd-library|\.portable-data\.json|library\.json|settings\.json|tasks\.json|queue\.json|sessions\.json|library\.db|catalogue\.json|sessions\.dpapi|download-tasks|adapted-sites\.json)$|^(?i:\.wvd-|\.video-downloader-)|(?i:\.(mp4|mkv|avi|mov|webm|m4v|part|srt|ass|mp3|flac))$') {throw 'User data or media path rejected.'}}
     if ($Name -match '(?i:\.ts)$' -and -not $Name.StartsWith('_internal/vendor/cctv-h5e-decrypt/')) {throw 'User media path rejected.'}
     $folderFull=[IO.Path]::GetFullPath($Folder).TrimEnd('\');$path=[IO.Path]::GetFullPath([IO.Path]::Combine($folderFull,$Name))
     if(-not $path.StartsWith($folderFull+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Path escapes folder.'}

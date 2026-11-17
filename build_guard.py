@@ -5,7 +5,7 @@ import stat
 
 STABLE_RUNTIME = r'D:\Project\tools\WebVideoDownloader'
 RESERVED = {'data', '.wvd', '.wvd-library', '.portable-data.json', 'library.json',
-            'settings.json', 'tasks.json', 'queue.json', 'sessions.json', 'library.db'}
+            'settings.json', 'tasks.json', 'queue.json', 'sessions.json', 'library.db', 'catalogue.json', 'sessions.dpapi', 'download-tasks', 'adapted-sites.json'}
 MEDIA = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.part', '.srt', '.ass', '.mp3', '.flac'}
 ROOT_PROGRAM = {'webvideodownloader.exe', '_internal', 'readme.md', 'licenses.md', '修复与回退.cmd'}
 

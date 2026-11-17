@@ -54,7 +54,7 @@ class UpdateProtocol(unittest.TestCase):
         self.assertTrue(protocol.verify_tree(payload,self.target)[0]);self.assertFalse((payload/'_internal/deleted.dat').exists())
         self.assertEqual((self.install/'_internal/my-notes.txt').read_bytes(),b'private')
     def test_paths_duplicates_symlinks_and_missing_members_rejected(self):
-        for name in ('../x','_internal/../x','_internal/CON.txt','_internal/x.','_internal/x:stream','downloads/video.mp4','_internal/data/index.json','_internal/.wvd-library/manifest.json','_internal/movie.mp4','_internal\\x'):
+        for name in ('../x','_internal/../x','_internal/CON.txt','_internal/x.','_internal/x:stream','downloads/video.mp4','_internal/data/index.json','_internal/catalogue.json','_internal/sessions.dpapi','_internal/download-tasks/job.json','_internal/.wvd-library/manifest.json','_internal/movie.mp4','_internal\\x'):
             with self.subTest(name=name),self.assertRaises(ValueError):protocol.relative(name)
         inv=json.loads(protocol.canonical(self.target));inv['files'].append(inv['files'][0]);inv['inventory_sha256']=hashlib.sha256(protocol.canonical(inv['files'])).hexdigest()
         with self.assertRaises(ValueError):protocol.validate_inventory(inv)
