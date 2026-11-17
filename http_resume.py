@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 
 
-def download(url, path, *, opener, headers, check, report, bytes_report=None, read=None):
+def download(url, path, *, opener, headers, check, report, bytes_report=None, read=None, preserve_existing=False):
     path = Path(path)
     sidecar = path.with_name(path.name + '.resume.json')
     for attempt in range(3):
@@ -25,6 +25,8 @@ def download(url, path, *, opener, headers, check, report, bytes_report=None, re
         request_headers = {**headers, 'Accept-Encoding':'identity'}
         if offset and validator:
             request_headers.update({'Range':f'bytes={offset}-', 'If-Range':validator})
+        elif offset and preserve_existing:
+            raise ValueError('无法安全续传，旧片段已保留；请取消旧任务并确认清缓存后重新下载。')
         elif offset:
             report(0, '源站未提供可靠续传标识，重新下载当前文件', None, None)
             offset = 0
@@ -49,6 +51,8 @@ def download(url, path, *, opener, headers, check, report, bytes_report=None, re
                         raise ValueError('源文件标识已改变，请取消此任务后重新下载。')
                     mode = 'ab'
                 elif status == 200:
+                    if offset and preserve_existing:
+                        raise ValueError('无法安全续传，旧片段已保留；请取消旧任务并确认清缓存后重新下载。')
                     if offset:
                         report(0, '源文件变化或不支持续传，重新下载当前文件', None, None)
                     offset, total, mode = 0, length, 'wb'
@@ -82,6 +86,8 @@ def download(url, path, *, opener, headers, check, report, bytes_report=None, re
                 return
         except urllib.error.HTTPError as error:
             error.close()
+            if error.code == 416 and preserve_existing:
+                raise ValueError('无法安全续传，旧片段已保留；请取消旧任务并确认清缓存后重新下载。') from None
             if error.code == 416:
                 sidecar.unlink(missing_ok=True)
                 if attempt < 2:

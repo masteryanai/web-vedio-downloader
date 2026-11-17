@@ -638,7 +638,7 @@ def _download_http(url, path, *, cookies, referer, progress, cancel):
     from media_bandwidth import read_media
     byte_state={}
     try:
-        download(url, path, opener=_opener(cookies, urllib.parse.urlsplit(url).hostname or ""),
+        download(url, path, preserve_existing=(Path(path).parent/'.preserve-existing').exists(), opener=_opener(cookies, urllib.parse.urlsplit(url).hostname or ""),
                  headers={"User-Agent": IPHONE_UA, "Referer": referer, "Accept": "*/*"},
                  check=lambda: _check_cancel(cancel),
                  read=lambda response,count:read_media(response,count,lambda:_check_cancel(cancel)),
@@ -902,6 +902,15 @@ def download_video(info, format_id, output_dir, cookies=None, progress=None, log
         selected = next((row for row in info.get('formats', []) if row['id'] == format_id), {})
         if any(selected.get(key) != value for key, value in task.get('format', {}).items()):
             raise VideoError('原任务的画质参数已变化，请取消此任务后重新下载。')
+        if task.get('restore_requires_relocation'):
+            raise VideoError('库外任务输出待重新定位，现有文件已保留。')
+        work = tasks.work_path(task)
+        if task.get('restored_cache'):
+            work.mkdir(parents=True, exist_ok=True)
+            (work/'.preserve-existing').touch()
+            pieces = [p for p in work.rglob('*') if p.is_file() and p.name != '.preserve-existing' and p.stat().st_size]
+            if pieces and info.get('_engine') not in ('haokan',):
+                raise VideoError('当前来源无法安全续传，旧片段已保留；请取消旧任务并确认清缓存后重新下载。')
         if task.get('result'):
             result = task['result']
             tasks.finish(task)
