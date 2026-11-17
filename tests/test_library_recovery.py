@@ -112,6 +112,34 @@ class Recovery(unittest.TestCase):
     self.assertEqual(called,[]);other.close()
    c.close()
 
+ def test_read_only_task_archive_retry_restores_paused_without_losing_rows(self):
+  import download_tasks as tasks
+  from library_archive import load
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'first')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root)
+   task=tasks.create({'url':'https://example.org/watch/1','site':'demo','title':'one'},'test',c.output(wid));c.bind(eids[0],task['id']);c.persist_library(lib)
+   current=root/'media/.wvd-library/current.json';archive=current.read_bytes()
+   with patch.dict(os.environ,WVD_DATA_DIR=str(root/'second')):
+    other=Catalogue();other.mount_library(root/'media');self.assertEqual(tasks.records(),[])
+    other.sync([])
+    self.assertEqual(other.episode(eids[0])['task_id'],task['id'])
+    c.close()
+    self.assertEqual(other.library_status(lib)['state'],'needs_task_restore')
+    with self.assertRaises(ValueError):other.patch_work(wid,no_play_prompt=True)
+    self.assertFalse(other.work(wid)['no_play_prompt'])
+    with self.assertRaisesRegex(ValueError,'重试'):other.persist_library(lib)
+    self.assertEqual(current.read_bytes(),archive)
+    with patch('library_archive.atomic',side_effect=OSError('index fail')):
+     with self.assertRaises(OSError):other.retry_persist(lib)
+    self.assertEqual(tasks.records(),[]);self.assertEqual(current.read_bytes(),archive)
+    future=b'{"format":99}';current.write_bytes(future)
+    with self.assertRaises(ValueError):other.retry_persist(lib)
+    self.assertEqual(current.read_bytes(),future);self.assertEqual(tasks.records(),[])
+    current.write_bytes(archive)
+    self.assertTrue(other.retry_persist(lib))
+    self.assertEqual(tasks.load_record(task['id'])['state'],'paused')
+    self.assertEqual(len(load(current)['tasks']),1);other.close()
+
  def test_source_confirmation_preserves_bad_original_and_reenables_writes(self):
   with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
    root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);current=root/'media/.wvd-library/current.json';bad=b'{broken original';current.write_bytes(bad)

@@ -284,13 +284,25 @@ class LibraryManager(QObject):
                          options=QFileDialog.Option.DontUseNativeDialog)
         if not target:
             return
-        if QMessageBox.question(self.dialog, '迁移整个存储库',
-                '将暂停此库的任务，复制并校验库内全部文件（包括字幕和附带文件），确认成功后才清理未变化的原件。'
-                '\n库外引用文件保持原位。目标：' + target + '\n是否继续？') != QMessageBox.StandardButton.Yes:
+        from library_transfer import preview_move
+        self.run(lambda cancel: preview_move(self.ws.store, key, target, cancel.is_set, self.progress.emit),
+                 lambda preview: self.confirm_move(key, target, preview), '正在扫描迁移范围与大小…')
+
+    def confirm_move(self, key, target, preview):
+        text = (f"源目录：{preview['source']}\n目标目录：{preview['destination']}\n"
+                f"范围：{preview['scope']}\n文件数：{preview['total_files']} 个\n"
+                f"总大小：{preview['total_bytes']:,} 字节\n"
+                '这是扫描时的估算；迁移时重新扫描并完整校验。\n'
+                '库外引用文件不移动。确认后暂停此库全部相关任务，复制并校验成功后才清理未变化的原件。\n是否继续？')
+        if QMessageBox.question(self.dialog, '迁移整个存储库', text) != QMessageBox.StandardButton.Yes:
             return
-        root = next(v['path'] for v in self.ws.store.read()['libraries'] if v['id'] == key)
+        root = preview['source']
         relevant = {row['id'] for row in __import__('download_tasks').records()
                     if Path(row['output']).is_relative_to(Path(root))}
+        data = self.ws.store.read()
+        works = {work['id'] for work in data['works'] if work.get('library_id') == key}
+        relevant.update(task for episode in data['episodes'] if episode['work_id'] in works
+                        for task in [episode.get('task_id'), *episode.get('task_ids', [])] if task)
         for task_id in relevant & self.ws.active_ids():
             self.ws.window.queue.pause(task_id)
         started = time.monotonic()

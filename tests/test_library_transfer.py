@@ -15,6 +15,23 @@ class LibraryTransfer(unittest.TestCase):
         self.lib=self.store.library(str(self.source),'Test')
     def tearDown(self):
         self.store.close();self.env.stop();self.temp.cleanup()
+    def test_preview_counts_all_files_without_hashing_or_writes(self):
+        from library_transfer import preview_move
+        (self.source/'subtitles.srt').write_bytes(b'subtitle')
+        expected=list(self.source.rglob('*'))
+        files=[p for p in expected if p.is_file()]
+        with patch('library_transfer._hash',side_effect=AssertionError('preview must not hash')):
+            preview=preview_move(self.store,self.lib,self.dest)
+        self.assertEqual(preview['total_files'],len(files))
+        self.assertEqual(preview['total_bytes'],sum(p.stat().st_size for p in files))
+        self.assertEqual(preview['source'],str(self.source))
+        self.assertEqual(preview['destination'],str(self.dest))
+        self.assertIn('全部文件',preview['scope'])
+        self.assertFalse(self.dest.exists())
+        with self.assertRaisesRegex(Exception,'取消'):
+            preview_move(self.store,self.lib,self.dest,lambda:True)
+        self.assertEqual((self.source/'subtitles.srt').read_bytes(),b'subtitle')
+
     def test_whole_library_includes_unregistered_files_and_empty_directories(self):
         (self.source/'subtitles.srt').write_bytes(b'subtitle')
         (self.source/'empty').mkdir()
