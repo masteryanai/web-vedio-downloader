@@ -365,6 +365,7 @@ class AddControls(QFrame):
             if QMessageBox.question(self,'确认来源合并','确认上述选集对应关系，并将此来源归入所选季？不会覆盖已有视频。')!=QMessageBox.StandardButton.Yes:return None
         wid,eids=self.ws.store.ingest(self.collection,self.name.text(),self.season.text(),self.library.currentData(),self.merge.currentData(),mapping)
         selected=[eids[i] for i in range(len(eids)) if self.table.item(i,0).checkState()==Qt.CheckState.Checked]
+        self.submitted_episode_ids=eids
         kind=self.window.quality.currentData() if self.window.info.get('_kind')=='images' else None
         policy={'height':self.height.currentData(),'strict':self.strict.isChecked(),'kind':kind}
         count=self.ws.enqueue(wid,selected,policy,self.window.info)
@@ -460,6 +461,8 @@ class Workspace(QObject):
         self.add_dialog.setMinimumSize(780,600);layout=QVBoxLayout(self.add_dialog);scroll=QScrollArea();scroll.setWidgetResizable(True);legacy_content.setObjectName('addFilmContent');scroll.viewport().setObjectName('addFilmViewport');scroll.setWidget(legacy_content);layout.addWidget(scroll)
         self.add_dialog.setStyleSheet("QWidget#addFilmContent,QWidget#addFilmViewport {background:#1b2838;color:#d6d7d8;}")
         self.add_controls=AddControls(self);legacy_content.layout().insertWidget(2,self.add_controls)
+        from add_flow import AddFlow
+        self.add_flow=AddFlow(self,legacy_content)
         window.download_button.setText('加入库并下载');window.path_button.hide();window.output_path.hide()
         self.add_dialog.finished.connect(self.add_closed)
         shell=QWidget(objectName='steamShell');outer=QVBoxLayout(shell);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
@@ -546,7 +549,7 @@ class Workspace(QObject):
         window.task_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose,False);window.task_dialog.setWindowFlags(Qt.WindowType.Widget)
         task_page=QWidget();tasks_layout=QVBoxLayout(task_page);tasks_layout.setContentsMargins(20,12,20,12);window.total_speed_label.setObjectName('sectionTitle');tasks_layout.addWidget(window.total_speed_label)
         self.trend=Trend();self.trend.setMinimumHeight(160);self.trend.setMaximumHeight(180);tasks_layout.addWidget(self.trend);tasks_layout.addWidget(window.task_dialog,1);self.pages.addWidget(task_page)
-        footer=QHBoxLayout();footer.setContentsMargins(12,3,12,3);add=QPushButton('⊞  添加影片');add.setObjectName('sideButton');add.clicked.connect(self.open_add);footer.addWidget(add);footer.addStretch();self.status=QPushButton('暂无任务');self.status.setObjectName('sideButton');self.status.clicked.connect(self.show_tasks);footer.addWidget(self.status);footer.addStretch()
+        footer=QHBoxLayout();footer.setContentsMargins(12,3,12,3);add=QPushButton('添加影片');add.setIcon(control_icon('add'));add.setIconSize(QSize(20,20));add.setMinimumHeight(32);add.setAccessibleName('添加影片');add.setObjectName('sideButton');add.clicked.connect(self.open_add);footer.addWidget(add);footer.addStretch();self.status=QPushButton('暂无任务');self.status.setObjectName('sideButton');self.status.clicked.connect(self.show_tasks);footer.addWidget(self.status);footer.addStretch()
         floating=QPushButton('悬浮框');floating.clicked.connect(lambda:window.desktop.set_float_enabled(not window.desktop.cfg['float_enabled']));footer.addWidget(floating);outer.addLayout(footer)
         window.setCentralWidget(shell);old_shell.deleteLater()
         area=window.screen().availableGeometry();width=max(750,area.width()-40);height=max(480,area.height()-60)
@@ -587,6 +590,7 @@ class Workspace(QObject):
         self.import_dialog.show();self.import_dialog.raise_()
     def inspected(self,info):
         self.add_controls.receive(info);images=info.get('_kind')=='images'
+        self.add_flow.show_results()
         self.window.quality.setVisible(images);self.add_controls.height.setVisible(not images);self.add_controls.strict.setVisible(not images)
         if not images:
             from media_library import format_height
@@ -690,6 +694,7 @@ class Workspace(QObject):
         self.episodes.blockSignals(False)
 
     def enqueue(self,wid,episode_ids,policy,info=None,allow_existing=False):
+        self.last_enqueue_errors=[]
         if len(episode_ids)>20 and not allow_existing:return self.enqueue_large(wid,episode_ids,policy,info)
         work=self.store.work(wid);folder=self.store.output(wid);count=0;skipped=[]
         for eid in episode_ids:
@@ -714,10 +719,12 @@ class Workspace(QObject):
             task=tasks.create(stub,'library-auto',str(folder));task.update(quality_policy=policy,library_title=title,library_episode=eid);tasks.save(task)
             self.store.bind(eid,task['id']);cookies=self.window.accounts.cookies_for(source['site']) if source['site'] in __import__('runtime').SITES else []
             if self.window.queue.enqueue(task['id'],cookies,payload):count+=1
-        if skipped:self.window.append_log('\n'.join(skipped));QMessageBox.information(self.window,'部分选集未加入','\n'.join(skipped))
+        self.last_enqueue_errors=skipped
+        if skipped:self.window.append_log('\n'.join(skipped))
         return count
 
     def enqueue_large(self,wid,episode_ids,policy,info=None):
+        self.batch_enqueued=0;self.last_enqueue_errors=[]
         if self.batch_preparing or self.batch_worker:raise ValueError('上一批任务还在准备或停止，请稍后再添加。')
         work=self.store.work(wid);folder=str(self.store.output(wid));data=self.store.read();wanted=set(episode_ids)
         episodes=[e for e in data['episodes'] if e['id'] in wanted and not self.ep_active(e)]
@@ -752,10 +759,13 @@ class Workspace(QObject):
                 self.window.queue.changed.emit();return
             if self.closed or self.window.close_when_idle:self.batch_preparing=False;return
             prepared,skipped=result;self.prepared_batch.extend(prepared)
-            if skipped:self.window.append_log('\n'.join(skipped));QMessageBox.information(self.window,'部分选集未加入',f'{len(skipped)} 集未加入，请查看日志；不会自动换源。')
+            self.last_enqueue_errors=skipped
+            if skipped:self.window.append_log('\n'.join(skipped))
             self.pump_batch()
         def failed(error):
             self.batch_preparing=False;self.batch_worker=False
+            self.last_enqueue_errors=[str(error)]
+            if self.add_flow.waiting_batch:self.add_flow.submitted(0)
             for task in tasks.pending():
                 if task['id'] not in self.active_ids():self.window.queue.initial_pending[task['id']]=task
             message(self.window,error)
@@ -763,9 +773,15 @@ class Workspace(QObject):
     def pump_batch(self):
         if self.closed or self.window.close_when_idle:self.cancel_batches();return
         for _ in range(min(10,len(self.prepared_batch))):
-            task_id,cookies,info=self.prepared_batch.popleft();self.window.queue.enqueue(task_id,cookies,info)
+            task_id,cookies,info=self.prepared_batch.popleft()
+            try:
+                if self.window.queue.enqueue(task_id,cookies,info):self.batch_enqueued+=1
+            except Exception as error:
+                self.last_enqueue_errors.append(str(error));self.window.queue.initial_pending[task_id]=tasks.load(task_id)
         if self.prepared_batch:QTimer.singleShot(20,self.pump_batch)
-        else:self.batch_preparing=False;self.window.refresh_buttons();self.refresh(True)
+        else:
+            self.batch_preparing=False;self.window.refresh_buttons();self.refresh(True)
+            if self.add_flow.waiting_batch:self.add_flow.submitted(self.batch_enqueued)
     def cancel_batches(self):
         self.batch_preparing=False;self.batch_generation+=1
         for task_id,_,_ in self.prepared_batch:

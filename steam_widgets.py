@@ -12,6 +12,9 @@ def control_icon(kind):
     elif kind=='maximize':painter.drawRect(3,3,9,9)
     elif kind=='close':painter.drawLine(3,3,12,12);painter.drawLine(12,3,3,12)
     elif kind=='back':painter.drawLine(13,8,3,8);painter.drawLine(3,8,7,4);painter.drawLine(3,8,7,12)
+    elif kind=='add':
+        painter.setPen(QPen(QColor('#e4edf5'),1.8));painter.drawRoundedRect(1,1,14,14,2,2)
+        painter.drawLine(4,8,12,8);painter.drawLine(8,4,8,12)
     painter.end();return QIcon(pixmap)
 
 

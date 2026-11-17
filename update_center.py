@@ -41,10 +41,10 @@ class UpdateCenter(QDialog):
         self.thread=None;self.job=None;self.info=None;self.prepared=None;self.cancel=threading.Event();self.closing=False;self.selection=None;self.need_confirm=False;self.catalog=[];self.catalog_manifest=None;self.pending_info=None;self.latest_info=None;self.awaiting_offer=False;self.launching=False;self.restored=False
         box=QVBoxLayout(self)
         self.version_label=QLabel(f'当前版本 {APP_VERSION}');self.version_label.setWordWrap(True);box.addWidget(self.version_label)
-        self.progress_card=QFrame();self.progress_card.setStyleSheet('QFrame {background:#eef4ff;border-radius:8px;}');status=QVBoxLayout(self.progress_card)
+        self.progress_card=QFrame(objectName='updateProgress');status=QVBoxLayout(self.progress_card);status.setSpacing(10);status.setContentsMargins(18,16,18,16)
         self.steps=QLabel('检查本地 → 下载 → 准备 → 校验 → 待安装 → 更新重启');status.addWidget(self.steps)
         self.label=QLabel('正在检查更新…');self.label.setWordWrap(True);self.label.setStyleSheet('font-size:18px;font-weight:600;');status.addWidget(self.label)
-        self.metrics=QLabel();self.metrics.setStyleSheet('font-size:22px;font-weight:600;color:#285ed4;');self.metrics.setWordWrap(True);status.addWidget(self.metrics)
+        self.metrics=QLabel(objectName='metrics');self.metrics.setWordWrap(True);status.addWidget(self.metrics)
         self.progress_detail=QLabel();self.progress_detail.setWordWrap(True);status.addWidget(self.progress_detail)
         self.bar=QProgressBar();self.bar.setRange(0,100);self.bar.setValue(0);self.bar.setMinimumHeight(22);status.addWidget(self.bar);box.addWidget(self.progress_card)
         row=QHBoxLayout();self.versions=QComboBox();self.versions.addItem('最新版本',None);self.versions.currentIndexChanged.connect(self.choose);row.addWidget(self.versions)
@@ -70,6 +70,8 @@ class UpdateCenter(QDialog):
         self.closing=False;self.cancel.clear();self.info=info;self.latest_info=info;self.selection=None;self.need_confirm=False
         self.version_label.setText(f'当前 {APP_VERSION} → 目标 {info["version"]} · 发布：{info.get("manifest",{}).get("published_at","未知")}' if info.get('available') else info.get('message','未发现新版本'))
         self.notes.render(info.get('notes',''));self.label.setText('发现新版本，可下载更新' if info.get('available') else info.get('message','未发现更新'))
+        self.steps.setVisible(bool(info.get('available')));self.bar.setVisible(bool(info.get('available')))
+        if not info.get('available'):self.notes.render('## 当前已是最新版本\n\n暂时没有需要安装的更新。可查看历史版本或打开发布页。')
         if info.get('available') and info.get('manifest',{}).get('schema')==2:
             self.catalog_manifest=info['manifest'];self.preview()
         self.refresh()
@@ -163,7 +165,7 @@ class UpdateCenter(QDialog):
             if QMessageBox.question(self,'改用全量更新',self.selection['reason']+'。是否下载完整包？')!=QMessageBox.StandardButton.Yes:return
             self.info['allow_full']=True
         import updater
-        self.cancel.clear();self.closing=False;self.stop.setText('取消并关闭');self.label.setText('开始准备更新…');self.steps.setText('当前阶段：检查本地文件');self.metrics.setText('正在准备…');self.bar.setValue(0)
+        self.cancel.clear();self.closing=False;self.stop.setText('取消并关闭');self.label.setText('开始准备更新…');self.steps.show();self.bar.show();self.steps.setText('当前阶段：检查本地文件');self.metrics.setText('正在准备…');self.bar.setValue(0)
         self.start(lambda progress:updater.prepare_update(self.info,self.cancel,progress),self.ready)
     def ready(self,result):
         if self.cancel.is_set():return

@@ -52,6 +52,9 @@ def _public(task):
         value=task.get(key)
         if isinstance(value,dict):result[key]={k:v for k,v in value.items() if k in fields and type(v) in (str,int,float,bool) and (type(v) is not float or math.isfinite(v))}
     result['url']=_url(result.get('url',''))
+    if task.get('verification'):
+        from verification_state import payload
+        result['verification']=payload(task['verification'])
     return result
 
 def snapshot_tasks(libid,root,context):

@@ -139,6 +139,7 @@ def move_library(store,libid,destination,cancel=lambda:False,progress=lambda dat
                         if _hash(temporary,cancel)!=row['sha256']:raise OSError('复制校验失败：'+rel)
                         if target.exists():raise ValueError('复制期间目标文件已出现，停止覆盖：'+rel)
                         temporary.rename(target)
+                        shutil.copystat(src,target,follow_symlinks=False)
                     finally:temporary.unlink(missing_ok=True)
                 if _hash(target,cancel)!=row['sha256'] or _hash(src,cancel)!=row['sha256']:raise OSError('源文件或目标文件在复制期间改变：'+rel)
                 copied+=row['size'];result.update(bytes=copied,files=result['files']+1)

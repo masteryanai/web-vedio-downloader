@@ -328,7 +328,9 @@ def gui(args: argparse.Namespace) -> int:
             self.log_box.setMaximumHeight(120)
             body.addWidget(self.log_box, 1)
             outer.addWidget(content, 1)
-            from library_ui import install
+            from runtime import IS_LITE
+            if IS_LITE:from lite_ui import install
+            else:from library_ui import install
             old=self.takeCentralWidget();self.workspace=install(self,content,old)
 
         def is_busy(self):
@@ -408,6 +410,8 @@ def gui(args: argparse.Namespace) -> int:
             try:
                 task=tasks.load_record(task_id)
                 if task['state'] in tasks.TERMINAL:return False
+                if task.get('verification'):
+                    accepted=self.queue.enqueue(task_id,[]);self.current_task_id=task_id;self.refresh_buttons();return accepted
                 if task['site']=='抖音' and self.queue.cached(task_id) is None:
                     if task_id in self.resume_pending or task_id==self.resume_browser_id:return False
                     self.resume_pending.append(task_id)
@@ -611,7 +615,7 @@ def gui(args: argparse.Namespace) -> int:
                 try:
                     count=self.workspace.add_controls.submit()
                     if count is not None:
-                        self.append_log(f'已入库，正在准备 {count} 集的任务。' if self.workspace.batch_preparing else f'已入库并排队 {count} 集。');self.workspace.add_dialog.hide();self.url_input.clear()
+                        self.append_log(f'正在准备 {count} 项任务。' if self.workspace.batch_preparing else f'已排队 {count} 项。');self.workspace.add_flow.submitted(count)
                 except Exception as error:QMessageBox.warning(self,'未能加入库',str(error))
                 return
             info=self.info; selected=self.quality.currentData();folder=self.output_path.text()
@@ -644,8 +648,11 @@ def gui(args: argparse.Namespace) -> int:
         @Slot(str,object)
         def queue_progress(self,task_id,data):
             if task_id==self.current_task_id and not self.is_busy():
-                percent=data.get('download_percent')
+                from task_progress import percentage,detail
+                percent=percentage(data)
                 self.status_text.setText(str(data.get('stage') or '下载中'))
+                if data.get('phase')=='verify':
+                    self.progress_bar.setRange(0,100 if percent is not None else 0);self.progress_bar.setValue(int(percent or 0));self.detail.setText(detail(data));return
                 if percent is not None:
                     self.progress_bar.setRange(0,100);self.progress_bar.setValue(int(percent))
                     self.detail.setText(f'已下载 {percent:.1f}% · 完成后继续封装与校验')

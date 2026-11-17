@@ -65,7 +65,7 @@ def _say(log, message, cookies=None):
         log(_safe_message(message, cookies))
 
 
-def _progress(callback, percent=0, stage="下载中", speed=None, eta=None, download_percent=None, phase=None, downloaded_bytes=None, total_bytes=None):
+def _progress(callback, percent=0, stage="下载中", speed=None, eta=None, download_percent=None, phase=None, downloaded_bytes=None, total_bytes=None, **details):
     import diagnostics
     diagnostics.stage(stage)
     if callback:
@@ -76,6 +76,7 @@ def _progress(callback, percent=0, stage="下载中", speed=None, eta=None, down
             "phase": phase,
             "speed": speed,
             "eta": eta,
+            **details,
             **({"downloaded_bytes":downloaded_bytes,"total_bytes":total_bytes} if phase=="download" or downloaded_bytes is not None or total_bytes is not None else {}),
         })
 
@@ -598,7 +599,8 @@ def _probe(path, cancel=None):
 
 
 def _verify(path, info, selected, progress, cancel):
-    _progress(progress, 90, "校验视频完整性", download_percent=100)
+    started=time.monotonic()
+    _progress(progress, 90, "校验视频完整性", download_percent=100,phase='verify',verification_percent=None,verification_elapsed=0)
     result = _probe(path, cancel)
     expected_duration = _number(info.get("duration"))
     if expected_duration and result["duration"] < expected_duration - max(3, expected_duration * 0.01):
@@ -609,11 +611,17 @@ def _verify(path, info, selected, progress, cancel):
     if selected.get("_audio_expected") and not result["_has_audio"]:
         raise VideoError("下载结果缺少应有的音轨，已停止生成成品。")
     duration = result["duration"]
+    _progress(progress,90,'校验视频完整性',phase='verify',verification_percent=0 if duration else None,verification_time=0,verification_duration=duration,verification_elapsed=time.monotonic()-started)
 
     def verify_line(line):
         if line.startswith("out_time_us="):
             elapsed = _number(line.partition("=")[2]) / 1_000_000
-            _progress(progress, 90 + min(9.5, 9.5 * elapsed / duration), "校验视频完整性")
+            ratio=min(1,max(0,elapsed/duration)) if duration else None
+            spent=time.monotonic()-started
+            _progress(progress,90+(9.5*ratio if ratio is not None else 0),'校验视频完整性',phase='verify',
+                      verification_percent=ratio*100 if ratio is not None else None,verification_time=elapsed,
+                      verification_duration=duration,verification_elapsed=spent,
+                      verification_eta=spent*(1-ratio)/ratio if ratio and spent>=3 else None)
 
     _run_process([
         _tool("ffmpeg"), "-hide_banner", "-v", "error", "-xerror", "-err_detect", "explode",
@@ -623,6 +631,35 @@ def _verify(path, info, selected, progress, cancel):
     result.pop("_has_audio", None)
     result["verified"] = True
     return result
+
+
+def _verify_download(path,info,selected,progress,cancel,work,extension='.mp4'):
+    from verification_state import capture
+    checkpoint=capture(work,path,info,selected,extension)
+    _progress(progress,90,'准备完整性校验',phase='verify',verification=checkpoint,download_percent=100)
+    return _verify(path,info,selected,progress,cancel)
+
+
+def resume_verification(task,progress=None,cancel=None,log=None):
+    """Caller owns the task lock. No source inspection or network is performed."""
+    import download_tasks as tasks
+    from verification_state import validate
+    media,checkpoint=validate(task)
+    task.update(state='running',stage='校验视频完整性',phase='verify');tasks.save(task)
+    def report(data):
+        for key in ('stage','phase','verification_percent','verification_time','verification_duration','verification_elapsed'):
+            if key in data:task[key]=data[key]
+        if progress:progress(data)
+    try:
+        result=_verify(media,{'duration':checkpoint['duration']},checkpoint['selected'],report,cancel)
+        _check_cancel(cancel)
+        result['path']=str(_publish(media,Path(task['output']),task.get('library_title') or task['title'],cancel,checkpoint['extension']))
+        task.pop('verification',None);task.update(state='completed',stage='已完成',result=result);tasks.save(task);tasks.finish(task)
+        _progress(progress,100,'下载完成',phase='complete',download_percent=100)
+        return result
+    except Exception:
+        task.update(state='paused' if cancel is not None and cancel.is_set() else 'failed',stage='待校验',phase='verify');tasks.save(task)
+        raise
 
 
 def _remux(source, target, progress, cancel):
@@ -863,7 +900,7 @@ def _perform_download(info: dict, format_id: str, output_dir: str, cookies: list
                         raise VideoError("图片压缩包校验失败。")
                 result = {"width": 0, "height": 0, "duration": 0, "size": target.stat().st_size, "verified": True}
             else:
-                result = _verify(target, {**info, "duration": 0}, selected, progress, cancel)
+                result = _verify_download(target, {**info, "duration": 0}, selected, progress, cancel,work,extension)
             result["path"] = str(_publish(target, output, info.get("title"), cancel, extension))
             _progress(progress, 100, "下载完成")
             return result
@@ -873,7 +910,7 @@ def _perform_download(info: dict, format_id: str, output_dir: str, cookies: list
             raise VideoError("视频信息已失效，请重新解析。")
         target = handler(info, selected, work, cookies, progress, log, cancel)
         _say(log, "下载已完成，正在核对分辨率、时长并解码全片。")
-        result = _verify(target, info, selected, progress, cancel)
+        result = _verify_download(target, info, selected, progress, cancel,work)
         _check_cancel(cancel)
         final = _publish(target, output, info.get("title"), cancel)
         result["path"] = str(final)
@@ -899,6 +936,8 @@ def download_video(info, format_id, output_dir, cookies=None, progress=None, log
     with (nullcontext() if lock_held else tasks.lock(task['id'])):
         if task['format_id'] != format_id or Path(task['output']).resolve() != Path(output_dir).expanduser().resolve():
             raise VideoError('恢复任务的画质或保存位置不一致。')
+        if task.get('verification'):
+            return resume_verification(task,progress,cancel,log)
         selected = next((row for row in info.get('formats', []) if row['id'] == format_id), {})
         if any(selected.get(key) != value for key, value in task.get('format', {}).items()):
             raise VideoError('原任务的画质参数已变化，请取消此任务后重新下载。')
@@ -918,12 +957,15 @@ def download_video(info, format_id, output_dir, cookies=None, progress=None, log
         task['state'] = 'running'; tasks.save(task)
         last_saved = [0.0]
         def report(data):
+            if 'verification' in data:task['verification']=data['verification']
+            for key in ('phase','verification_percent','verification_time','verification_duration','verification_elapsed'):
+                if key in data:task[key]=data[key]
             if data.get('download_percent') is not None or data.get('phase') == 'download':
                 task['download_percent'] = data['download_percent']
             for key in ('total_bytes','downloaded_bytes'):
                 if key in data:task[key]=data[key]
             task['stage'] = data.get('stage', '')
-            if time.monotonic()-last_saved[0] >= .75:
+            if 'verification' in data or time.monotonic()-last_saved[0] >= .75:
                 tasks.save(task); last_saved[0] = time.monotonic()
             if progress: progress(data)
         try:
@@ -931,6 +973,7 @@ def download_video(info, format_id, output_dir, cookies=None, progress=None, log
             task.update(state='completed', result=result); tasks.save(task)
         except Exception:
             task['state'] = 'paused' if cancel is not None and cancel.is_set() else 'failed'
+            if task.get('verification'):task['stage']='待校验'
             tasks.save(task)
             raise
         try:

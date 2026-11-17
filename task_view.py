@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,
 from pathlib import Path, PureWindowsPath
 from transfer_stats import row_speed,speed_text
 import download_tasks as tasks
+from task_progress import percentage,detail as stage_detail
 
 # Fixed application messages form the stable default width. Variable source logs
 # (titles, extractor details, errors) use the same cell clipping and tooltip.
@@ -110,8 +111,8 @@ class DownloadRowDelegate(ElidingDelegate):
         detail=row_details(task)
         painter.drawText(QRect(left,rect.y()+43,width,19),Qt.AlignmentFlag.AlignVCenter,painter.fontMetrics().elidedText(detail,Qt.TextElideMode.ElideRight,width))
         state=dialog.table.item(index.row(),3).text();speed=dialog.table.item(index.row(),5).text()
-        percent=task.get('download_percent');completed=task['state']=='completed'
-        label=state+('  ·  '+speed if task['state']=='running' else '')
+        percent=percentage(task);completed=task['state']=='completed'
+        label=(stage_detail(task) if task.get('verification') or task.get('phase')=='verify' else state)+('  ·  '+speed if task['state']=='running' and task.get('phase')!='verify' else '')
         if isinstance(percent,(int,float)):label+=f'  ·  {percent:.1f}%'
         painter.setPen(QColor('#8fce61' if completed else '#66c0f4'))
         painter.drawText(QRect(left,rect.y()+67,width,18),Qt.AlignmentFlag.AlignVCenter,painter.fontMetrics().elidedText(label,Qt.TextElideMode.ElideRight,width))
@@ -278,7 +279,7 @@ class TaskDialog(QDialog):
                     box.addWidget(bar,0,Qt.AlignmentFlag.AlignVCenter)
                     self.table.setCellWidget(i,1,cell)
                 else:bar=cell.findChild(QProgressBar)
-                percent=task.get('download_percent');bar.setRange(0,100);bar.setValue(int(percent or 0))
+                percent=percentage(task);bar.setRange(0,100 if percent is not None else 0);bar.setValue(int(percent or 0))
                 bar.setFormat(f'{percent:.1f}%' if isinstance(percent,(int,float)) else '总量未知')
                 bar.setTextVisible(True)
                 action=self.table.cellWidget(i,6)
@@ -296,7 +297,7 @@ class TaskDialog(QDialog):
                     button.clicked.connect(lambda checked=False,key=task_id:self.open_result(key))
                     button.setStyleSheet('QPushButton{background:#388620;color:white;border:0;padding:10px;} QPushButton:hover{background:#337a1e;}')
                 else:
-                    active=self.eligible(task,'pause');button.setText('Ⅱ  暂停' if active else '↓  继续')
+                    active=self.eligible(task,'pause');button.setText('暂停校验' if active and task.get('verification') else 'Ⅱ  暂停' if active else '继续校验' if task.get('verification') else '↓  继续')
                     button.setEnabled(self.eligible(task,'pause' if active else 'resume'))
                     button.clicked.connect(lambda checked=False,key=task_id,kind='pause' if active else 'resume':self.apply_batch(kind,[key],0))
                     button.setStyleSheet('QPushButton{background:#414a56;color:#dce7f1;border:0;padding:10px;} QPushButton:hover{background:#556474;}')

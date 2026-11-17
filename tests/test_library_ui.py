@@ -55,7 +55,8 @@ def check():
                     QTimer.singleShot(5,cancel_ready)
                 window.download()
                 assert len(ws.store.read()['works'])==1 and len(ws.store.read()['episodes'])==total
-                assert ws.pages.currentIndex()==1 and not ws.add_dialog.isVisible()
+                assert ws.pages.currentIndex()==1
+                assert ws.add_dialog.isVisible() if large else not ws.add_dialog.isVisible()
                 if large:
                     assert ws.episodes.rowCount()==50;ws.turn_page(1);assert ws.episode_page==1;ws.turn_page(-1)
             except BaseException as error:errors.append(traceback.format_exc());window.request_exit()
@@ -73,11 +74,13 @@ def check():
             if window.queue.active or window.queue.waiting or ws.batch_preparing or ws.batch_worker:QTimer.singleShot(50,verify);return
             try:
                 if cancelled:
+                    assert ws.add_dialog.isVisible()
                     assert not window.queue.completed_rows and not window.queue.active and not window.queue.waiting
                     records=__import__('download_tasks').records();assert len(records)==selected_count
                     assert all(r['state']=='paused' for r in records)
                     done.append(True);window.request_exit();return
                 ws.store.sync(__import__('download_tasks').records());data=ws.store.read();work=data['works'][0]
+                assert not ws.add_dialog.isVisible()
                 downloaded=data['episodes'][:selected_count];assert all(e['files'] for e in downloaded),{'missing':[e['label'] for e in downloaded if not e['files']],'queue':snapshot(),'recent':observations}
                 assert all(Path(e['files'][0]['path']).is_relative_to(root/'films') for e in downloaded)
                 assert all('第一季' in e['files'][0]['path'] for e in downloaded)

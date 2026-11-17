@@ -47,6 +47,9 @@ class Job(QObject):
                                 or data.get('download_percent') is None and data.get('stage') != last_report[1]):
                             self.progress.emit(task_id, data)
                             last_report[:] = [now, data.get('stage')]
+                    if task.get('verification'):
+                        result=engine.resume_verification(task,progress,self.cancel,log)
+                        self.result.emit(task_id,result,'');return
                     info = self.payload
                     if info is None:
                         self.progress.emit(task_id, {'stage':'重新解析媒体地址', 'download_percent':task.get('download_percent')})
@@ -71,7 +74,7 @@ class Job(QObject):
                         latest = tasks.load(task_id)
                         if latest['state'] not in tasks.TERMINAL:
                             latest['state'] = 'paused' if self.cancel.is_set() else 'failed'
-                            latest['stage']=str(error)[:500]
+                            latest['stage']='待校验' if latest.get('verification') else str(error)[:500]
                             tasks.save(latest)
                     raise
         except Exception as error:

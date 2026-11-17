@@ -5,7 +5,10 @@ QFrame#sidebar,QFrame#librarySidebar {background:#292c33;border:0;}
 QFrame#card,QFrame#panel {background:#2b3038;border:1px solid #353b45;border-radius:4px;}
 QLabel#brand {font-size:19px;color:#edf5ff;font-weight:700;} QLabel#title {font-size:26px;font-weight:700;color:#f3f7fc;}
 QLabel#videoTitle,QLabel#sectionTitle {font-size:16px;font-weight:600;color:#e5eff8;}
-QLabel#muted,QLabel#sideMuted {color:#8f98a0;} QLabel#metrics {font-size:24px;color:#41c5f4;font-weight:700;}
+QLabel#muted,QLabel#sideMuted {color:#abb8c5;} QLabel#metrics {font-size:24px;color:#66c0f4;font-weight:700;}
+QFrame#updateProgress {background:#243444;border:1px solid #405568;border-radius:5px;}
+QFrame#updateProgress QLabel {color:#e0ebf5;}
+QFrame#updateProgress QLabel#metrics {color:#66c0f4;}
 QLabel#stateBadge {color:#85d5ee;background:#263e51;padding:6px;}
 QPushButton {background:#353b45;color:#dce9f5;border:1px solid #414853;border-radius:3px;padding:5px 12px;min-height:18px;}
 QLineEdit:focus,QPlainTextEdit:focus,QComboBox:focus {border-color:#66c0f4;}
@@ -14,7 +17,7 @@ QPushButton:hover {background:#46505e;color:white;} QPushButton:pressed {backgro
 QPushButton#primary {background:#0878c0;color:white;border-color:#0878c0;font-weight:600;}
 QPushButton#nav {background:transparent;border:0;font-size:21px;font-weight:600;}
 QPushButton#sideButton {text-align:left;background:transparent;border:0;color:#b8bcbf;}
-QPushButton:disabled {color:#61778b;background:#24313e;border-color:#293b4b;}
+QPushButton:disabled {color:#9aa9b7;background:#25303b;border-color:#3a4652;}
 QLineEdit,QPlainTextEdit,QTextEdit,QTextBrowser,QComboBox,QSpinBox,QDoubleSpinBox {background:#202329;color:#c2d7e9;border:1px solid #3d434d;border-radius:3px;padding:6px;selection-background-color:#3e5068;}
 QComboBox QAbstractItemView {background:#1c2e3e;color:#d1e4f4;selection-background-color:#345772;}
 QTableWidget,QListWidget,QScrollArea {background:#202329;color:#bfd3e4;border:0;alternate-background-color:#292e36;gridline-color:#34485b;}
