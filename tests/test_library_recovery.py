@@ -100,3 +100,31 @@ class Recovery(unittest.TestCase):
     with self.assertRaises(ValueError):second.delete_owned(eids[0],[str(media)])
     self.assertTrue(media.exists())
    second.patch_work(wid,no_play_prompt=True);self.assertTrue(c.work(wid)['no_play_prompt']);second.close();self.assertTrue(c.library_status(lib)['writable']);c.close()
+
+ def test_read_only_mount_never_restores_tasks_and_clone_rejects_before_handler(self):
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'first')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root)
+   with patch.dict(os.environ,WVD_DATA_DIR=str(root/'second')):
+    other=Catalogue();called=[];other.task_restore_handler=lambda *args:called.append(args)
+    other.mount_library(root/'media');self.assertEqual(called,[])
+    other.remove_library(lib)
+    with self.assertRaises(ValueError):other.mount_library(root/'media',mode='clone')
+    self.assertEqual(called,[]);other.close()
+   c.close()
+
+ def test_source_confirmation_preserves_bad_original_and_reenables_writes(self):
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);current=root/'media/.wvd-library/current.json';bad=b'{broken original';current.write_bytes(bad)
+   c.mount_library(root/'media',recovery='sources');self.assertEqual(c.library_status(lib)['state'],'needs_online_confirmation')
+   self.assertTrue(c.confirm_source_restore(lib));self.assertTrue(c.library_status(lib)['writable']);c.patch_work(wid,check_hours=7)
+   saved=list((current.parent/'quarantine').glob('*.json'));self.assertTrue(any(p.read_bytes()==bad for p in saved));self.assertEqual(c.probe_library(root/'media')['state'],'valid');c.close()
+
+ def test_history_confirmation_keeps_bad_bytes_and_unknown_format_is_protected(self):
+  import json
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);c.patch_work(wid,check_hours=8);history=c.probe_library(root/'media')['histories'][0]['id'];current=root/'media/.wvd-library/current.json';bad=b'broken history original';current.write_bytes(bad)
+   c.mount_library(root/'media',recovery='history:'+history);c.patch_work(wid,check_hours=9)
+   self.assertTrue(any(p.read_bytes()==bad for p in (current.parent/'quarantine').glob('*.json')))
+   future=json.dumps({'format':99}).encode();current.write_bytes(future);c.mount_library(root/'media',recovery='sources')
+   with self.assertRaises(ValueError):c.confirm_source_restore(lib)
+   self.assertEqual(current.read_bytes(),future);c.close()

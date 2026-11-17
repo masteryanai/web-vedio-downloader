@@ -146,6 +146,7 @@ def materialize(root,payload):
   for f in e.get('files',[]):
    if f.pop('location','external')=='library':f['path']=resolve(root,f['path'])
  for w in result['works']:
+  for k,v in {'no_play_prompt':False,'check_enabled':False,'check_hours':24,'checked_at':0,'cover':'','banner':'','new_count':0}.items():w.setdefault(k,v)
   for k in ('cover','banner'):
    if w.get(k):w[k]=resolve(root,w[k])
  return result
@@ -175,3 +176,17 @@ def freeze(root):
  finally:
   _frozen[key]-=1
   if not _frozen[key]:del _frozen[key]
+
+def publish_recovery(root,payload):
+ """Publish an explicitly selected recovery, retaining corrupt original bytes."""
+ folder=Path(root)/DIRECTORY;current=folder/'current.json'
+ if current.exists():
+  raw=current.read_bytes()
+  try:record=json.loads(raw)
+  except (ValueError,UnicodeError):record=None
+  if isinstance(record,dict) and record.get('format') is not None and record.get('format')!=FORMAT:raise ValueError('无法识别的存储库格式；原件保留。')
+  try:load(current)
+  except (ValueError,KeyError,TypeError):
+   quarantine=folder/'quarantine'/(uuid.uuid4().hex+'.json');quarantine.parent.mkdir(parents=True,exist_ok=True);atomic_bytes(quarantine,raw)
+   atomic(current,encode(payload))
+ publish(root,payload)

@@ -136,6 +136,19 @@ class Catalogue:
             for e in value['episodes']:e['id']=mapping[e['id']];e['work_id']=mapping[e['work_id']]
             value['library']['id']=mapping[oldid]
         libid=value['library']['id'];value['library']['path']=str(root)
+        # Establish physical write access before a task bridge can touch caches.
+        from library_archive import SharedLease,frozen
+        can_write=False
+        if recovery not in ('current','sources') and self.probe_library(root)['state']=='unknown':raise ValueError('无法识别的存储库格式；原件保留。')
+        try:
+            if frozen(root) or not root.stat().st_mode & 0o222:raise OSError('存储库只读或正在迁移。')
+            if mode=='relocate' and libid in self._leases:
+                oldlease=self._leases.pop(libid);oldlease.close()
+            if libid not in self._leases:self._leases[libid]=SharedLease(root,self.path)
+            can_write=True
+            if recovery!='sources':self._statuses.pop(libid,None)
+        except OSError:
+            if mode=='clone' or recovery not in ('current','sources'):raise ValueError('存储库不可写，未恢复任务或修改缓存。')
         handler=self.task_restore_handler
         if handler is None:
             try:
@@ -144,17 +157,15 @@ class Catalogue:
             except ImportError:pass
         for task in value.get('tasks',[]):
             if task.get('id'):mapping.setdefault(task['id'],identifier() if mode=='clone' else task['id'])
-        if handler:
+        if handler and can_write and recovery!='sources':
             remap=handler(value.get('tasks',[]),root,mapping) or {}
         else:remap={}
         for e in value['episodes']:
+            if not can_write:continue
             e['task_ids']=[remap[t] for t in e.get('task_ids',[]) if t in remap];e['task_id']=remap.get(e.get('task_id'));e['synced_tasks']=[]
             if e['task_id']:e['status']='已暂停'
             elif e.get('status') in ('排队中','处理中'):e['status']='待继续'
         with self.change(persist=False) as data:
-            if mode=='relocate':
-                lease=self._leases.pop(oldid,None)
-                if lease:lease.close()
             data['libraries']=[v for v in data['libraries'] if v['id']!=libid]+[value['library']]
             previous={w['id'] for w in data['works'] if w.get('library_id')==libid}
             conflicts={w['id'] for w in data['works'] if w.get('library_id')!=libid}&{w['id'] for w in value['works']}
@@ -165,13 +176,29 @@ class Catalogue:
             self._statuses[libid]={'writable':False,'state':'needs_online_confirmation','error':'请重新解析来源并确认匹配。','pending':False}
         elif mode=='clone' or recovery!='current':
             # Explicit history recovery may replace a damaged current record.
-            from library_archive import atomic,encode,snapshot,publish
+            from library_archive import snapshot,publish_recovery
             if not self.library_status(libid)['writable']:raise ValueError('存储库不可写。')
             payload=snapshot(self.read(),value['library'],app_data_dir(),value.get('tasks',[]))
-            if mode=='clone':publish(root,payload)
-            else:
-                atomic(root/DIRECTORY/'current.json',encode(payload));publish(root,payload)
+            publish_recovery(root,payload)
         return libid
+
+    def confirm_source_restore(self,key):
+        """Caller has verified source matches and obtained user confirmation."""
+        from library_archive import snapshot,publish_recovery
+        state=self._statuses.get(key,{})
+        if state.get('state')!='needs_online_confirmation':raise ValueError('该存储库没有待确认的来源恢复。')
+        data=self.read();lib=next(v for v in data['libraries'] if v['id']==key)
+        # Temporarily remove the confirmation gate to check the physical lease.
+        self._statuses.pop(key,None)
+        try:
+            status=self.library_status(key)
+            if not status['writable']:raise ValueError(status['error'])
+            publish_recovery(lib['path'],snapshot(data,lib,app_data_dir()))
+            self._statuses[key]={'writable':True,'state':'ready','error':'','pending':False}
+            return True
+        except BaseException:
+            self._statuses[key]=state
+            raise
 
     def read(self):
         with _gate:
