@@ -10,6 +10,14 @@ from transfer_stats import summarize,row_speed
 
 
 class TransferStats(unittest.TestCase):
+    def test_verification_is_separate_from_download_bytes(self):
+        from transfer_stats import overview
+        q=self.fixture();q.batch_rows.pop('small');q.active.pop('small')
+        q.snapshots['big'].update(phase='verify',verification_percent=42,verification_time=21,verification_duration=50)
+        stats=summarize(q,101)
+        self.assertFalse(stats['transfers']);self.assertEqual(stats['percent'],10)
+        self.assertEqual(len(stats['verifications']),1);self.assertIn('42.0%',overview(stats));self.assertIn('00:00:21',overview(stats))
+
     def fixture(self):
         q=types.SimpleNamespace(active={},waiting=[],snapshots={},batch_rows={},deleting=set())
         for key,size,percent in [('big',1000,10),('small',100,100)]:

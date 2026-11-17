@@ -17,7 +17,7 @@ def extract(text):
         try:
             value=canonical(value)
             if lookup(value) and value not in result:result.append(value)
-        except (ValueError,RuntimeError):continue
+        except (ValueError,RuntimeError,TypeError,OSError):continue
         if len(result)>=100:break
     return result
 

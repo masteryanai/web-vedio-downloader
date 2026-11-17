@@ -27,7 +27,7 @@ def ensure_browser(parent=None):
         @Slot(object)
         def receive(self,data):
             label.setText(data.get('stage','正在下载组件…'))
-            done,total=data.get('downloaded_bytes',data.get('files_done')),data.get('total_bytes',data.get('files_total'))
+            done,total=data.get('bytes',data.get('processed_bytes',data.get('files_done'))),data.get('total',data.get('total_bytes',data.get('files_total')))
             if total and done is not None:bar.setRange(0,100);bar.setValue(int(done*100/total))
     relay=Relay(dialog);relay.changed.connect(relay.receive)
     def done(_):finished.append(True);stopped[0]=True;dialog.accept()

@@ -7,7 +7,7 @@ import shutil
 import sys
 
 from product_identity import PRODUCT,PRODUCT_ID,APP_NAME,UPDATE_MANIFEST,HISTORY_MANIFEST,IS_LITE,EXECUTABLE,EDITION,package_name,inventory_name
-APP_VERSION = "0.16.0"
+APP_VERSION = "0.17.0"
 SITES = ("央视网", "好看视频", "抖音", "B站")
 
 

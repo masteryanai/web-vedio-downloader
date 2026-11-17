@@ -268,7 +268,8 @@ class TaskDialog(QDialog):
                     if j==0:
                         item.setToolTip(f"{task['title']}\n{task.get('site','')} · {state}\n{task.get('output','')}")
                         item.setData(Qt.ItemDataRole.AccessibleTextRole,task['title'])
-                        item.setData(Qt.ItemDataRole.AccessibleDescriptionRole,f'{row_details(task)}，{state}，{task.get("download_percent") or 0}%')
+                        value=percentage(task)
+                        item.setData(Qt.ItemDataRole.AccessibleDescriptionRole,f'{row_details(task)}，{state}，'+(f'{value:.1f}%' if value is not None else '进度未知'))
                         item.setData(Qt.ItemDataRole.UserRole,task['id'])
                         item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable)
                         item.setCheckState(Qt.CheckState.Checked if task['id'] in self.checked_ids else Qt.CheckState.Unchecked)

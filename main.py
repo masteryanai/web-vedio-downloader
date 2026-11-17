@@ -434,6 +434,8 @@ def gui(args: argparse.Namespace) -> int:
                 try:
                     task=tasks.load_record(task_id)
                     if task['state'] in tasks.TERMINAL:continue
+                    from component_ui import ensure_browser
+                    if not ensure_browser(self):raise ValueError('未安装网页验证组件；任务已保留，可稍后继续。')
                     from douyin_browser import DouyinCapture
                     from engine import _extract_url
                     dialog=DouyinCapture(self.accounts._profile('抖音'),_extract_url(task['url']),self)
@@ -857,7 +859,7 @@ def gui(args: argparse.Namespace) -> int:
         window.url_input.setPlainText(args.url)
     window.refresh_buttons()
     window.show()
-    if not args.smoke_ui and not getattr(args,'smoke_inspect',False) and os.environ.get('QT_QPA_PLATFORM')!='offscreen':
+    if not args.smoke_ui and not getattr(args,'smoke_inspect',False) and not getattr(args,'smoke_browser',False) and os.environ.get('QT_QPA_PLATFORM')!='offscreen':
         from clipboard_watch import ClipboardWatcher
         window.clipboard_watcher=ClipboardWatcher(window)
     if getattr(args,'update_plan',None):
@@ -889,6 +891,24 @@ def gui(args: argparse.Namespace) -> int:
             if answer==QMessageBox.StandardButton.Yes:window.show_diagnostics()
         QTimer.singleShot(1500,notify_incidents)
     inspection_ok=[False]
+    if getattr(args,'smoke_browser',False):
+        try:
+            from optional_components import activate_browser
+            activate_browser()
+            from PySide6.QtWebEngineWidgets import QWebEngineView
+            window.browser_probe=QWebEngineView(window);window.browser_probe.setWindowFlags(Qt.WindowType.Window);window.browser_probe.resize(600,300)
+            def browser_loaded(ok):
+                def checked(text):
+                    inspection_ok[0]=bool(ok and 'Browser component ready' in str(text))
+                    def finish():
+                        if inspection_ok[0] and args.screenshot:window.browser_probe.grab().save(str(Path(args.screenshot)))
+                        window.browser_probe.close();window.close();app.quit()
+                    QTimer.singleShot(200,finish)
+                window.browser_probe.page().toPlainText(checked)
+            window.browser_probe.loadFinished.connect(browser_loaded);window.browser_probe.setHtml('<html><body style="background:#171d25;color:#d6d7d8;font:24px sans-serif"><h1>Browser component ready</h1><p>Local page · no account or network request</p></body></html>');window.browser_probe.show()
+            QTimer.singleShot(30000,app.quit)
+        except Exception as error:
+            diagnostics.event('smoke.browser.failed',str(error));QTimer.singleShot(0,app.quit)
     if getattr(args,'smoke_inspect',False):
         started=time.monotonic()
         def inspect_result():
@@ -899,7 +919,7 @@ def gui(args: argparse.Namespace) -> int:
         QTimer.singleShot(250,window.inspect)
     try:
         result=app.exec()
-        return (0 if inspection_ok[0] else 2) if getattr(args,'smoke_inspect',False) else result
+        return (0 if inspection_ok[0] else 2) if getattr(args,'smoke_inspect',False) or getattr(args,'smoke_browser',False) else result
     finally:
         heartbeat.stop()
         if recorder:recorder.stop()
@@ -953,6 +973,7 @@ def main() -> int:
     parser.add_argument("--url", help="Prefill the GUI URL field")
     parser.add_argument("--smoke-ui", action="store_true", help="Open and close an offscreen window")
     parser.add_argument("--smoke-inspect",action="store_true",help=argparse.SUPPRESS)
+    parser.add_argument("--smoke-browser",action="store_true",help=argparse.SUPPRESS)
     parser.add_argument("--screenshot", help="Save the offscreen window screenshot")
     parser.add_argument('--update-plan',help=argparse.SUPPRESS)
     parser.add_argument('--update-token',help=argparse.SUPPRESS)

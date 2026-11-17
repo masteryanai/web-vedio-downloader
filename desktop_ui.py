@@ -14,9 +14,10 @@ def clamp(rect,area):
 
 
 def app_icon():
+    from runtime import IS_LITE
     pixmap=QPixmap(32,32);pixmap.fill(Qt.GlobalColor.transparent)
     painter=QPainter(pixmap);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen);painter.setBrush(QColor('#285ed4'));painter.drawRoundedRect(1,1,30,30,7,7)
+    painter.setPen(Qt.PenStyle.NoPen);painter.setBrush(QColor('#108878' if IS_LITE else '#285ed4'));painter.drawRoundedRect(1,1,30,30,7,7)
     painter.setPen(QPen(QColor('white'),3));painter.drawLine(16,7,16,22)
     painter.drawLine(9,16,16,23);painter.drawLine(16,23,23,16);painter.end()
     return QIcon(pixmap)
@@ -155,7 +156,7 @@ class FloatingPanel(QFrame):
         elif self.edge and not self.underMouse():self.hide_timer.start()
     def pages(self):
         if (self.stats or {}).get('idle'):return [None]
-        return [None,'progress']+[('task',row['id']) for row in (self.stats or {}).get('transfers',[])]
+        return [None,'progress']+[('task',row['id']) for row in (self.stats or {}).get('transfers',[])]+[('verify',row['id']) for row in (self.stats or {}).get('verifications',[])]
     def update_stats(self,stats):
         self.stats=stats
         if self.page_id not in self.pages():self.page_id=None
@@ -167,11 +168,18 @@ class FloatingPanel(QFrame):
         if not self.stats:return
         task_id=self.page_id[1] if isinstance(self.page_id,tuple) and self.page_id[0]=='task' else None
         row=next((row for row in self.stats['transfers'] if row['id']==task_id),None)
+        verifying=next((item for item in self.stats.get('verifications',[]) if isinstance(self.page_id,tuple) and self.page_id==('verify',item['id'])),None)
         percent=row.get('download_percent') if row else self.stats['percent']
         progress=f'{percent:.1f}%' if percent is not None else '暂无任务' if not self.stats['count'] else '总量未知'
         if row:title=row['title'];value=speed_text(row['live_speed'])
         elif self.page_id=='progress':title='总进度';value=progress
         else:title='总速度';value=speed_text(self.stats['speed'])
+        if verifying:
+            from task_progress import percentage,detail
+            percent=percentage(verifying);title=verifying['title'];value='完整性校验'
+            progress=f'{percent:.1f}%' if percent is not None else '正在校验'
+            self.detail.setToolTip(detail(verifying))
+        else:self.detail.setToolTip('')
         if self.stats.get('idle'):title='暂无任务';value='0 B/s';progress='暂无任务';percent=None
         elif not self.stats['active'] and not self.stats['queued'] and self.stats.get('paused'):
             title='待继续 '+str(self.stats['paused']-self.stats.get('failed',0));value='失败 '+str(self.stats.get('failed',0));progress='任务待处理';percent=None

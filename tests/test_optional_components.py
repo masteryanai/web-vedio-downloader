@@ -4,6 +4,9 @@ from unittest.mock import patch
 import optional_components as components
 
 class OptionalComponents(unittest.TestCase):
+    def test_legitimate_nested_qml_components_namespace(self):
+        components.safe_relative('PySide6/qml/QtQuick/VirtualKeyboard/Components/Key.qml')
+        with self.assertRaises(ValueError):components.safe_relative('PySide6/components/data.json')
     def fixture(self,root,malicious=False):
         archive=root/'browser.zip';name='../data/settings.json' if malicious else 'PySide6/Qt6WebEngineCore.dll';body=b'verified component fixture'
         with zipfile.ZipFile(archive,'w') as output:output.writestr(name,body)

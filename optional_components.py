@@ -30,7 +30,9 @@ def safe_relative(name):
     if not isinstance(name,str) or '\\' in name or ':' in name or '\x00' in name:raise ValueError('组件文件路径无效。')
     parts=name.split('/')
     if parts[0]!='PySide6' or len(parts)<2 or any(p in ('','.','..') or p.endswith((' ','.')) for p in parts):raise ValueError('组件路径越界。')
-    if any(p.casefold() in ('data','update','components','.wvd-library','sessions.dpapi') for p in parts):raise ValueError('组件不能包含用户数据。')
+    # Qt ships a legitimate nested QML "Components" directory. Only the
+    # installation namespace immediately below PySide6 is reserved here.
+    if parts[1].casefold() in ('data','update','components','.wvd-library','sessions.dpapi'):raise ValueError('组件不能包含用户数据。')
     return PurePosixPath(name)
 
 def folder(value):
@@ -101,6 +103,7 @@ def activate_browser():
     import PySide6
     path=root/'PySide6';PySide6.__path__.append(str(path))
     if os.name=='nt':_handles.append(os.add_dll_directory(str(path)))
+    os.environ['PATH']=os.pathsep.join((str(resource_path('PySide6')),str(resource_path()),os.environ.get('PATH','')))
     os.environ['QTWEBENGINEPROCESS_PATH']=str(path/'QtWebEngineProcess.exe')
     os.environ['QTWEBENGINE_RESOURCES_PATH']=str(path/'resources')
     os.environ['QTWEBENGINE_LOCALES_PATH']=str(path/'translations'/'qtwebengine_locales')

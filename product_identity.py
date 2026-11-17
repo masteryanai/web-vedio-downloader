@@ -35,5 +35,10 @@ def inventory_name(version):return 'inventory-'+('lite-full-' if IS_LITE and EDI
 
 def render_script(text):
     """Keep the manager's proven installer template, with a separate product boundary."""
-    if not IS_LITE:return text
-    return text.replace('WebVideoDownloader',PRODUCT_ID).replace('update.json',UPDATE_MANIFEST).replace('history.json',HISTORY_MANIFEST).replace('.Substring(19)',f'.Substring({len(PRODUCT_ID)+1})')
+    return render_for(text,PRODUCT,EDITION)
+
+def render_for(text,product,edition):
+    if product=='manager':return text
+    identity=PRODUCTS['lite'][0];manifest='update-lite-full.json' if edition=='full' else 'update-lite.json'
+    history='history-lite-full.json' if edition=='full' else 'history-lite.json'
+    return text.replace('WebVideoDownloader',identity).replace('update.json',manifest).replace('history.json',history).replace('.Substring(19)',f'.Substring({len(identity)+1})')

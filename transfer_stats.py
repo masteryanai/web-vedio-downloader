@@ -34,13 +34,14 @@ def row_speed(queue,row,now=None):
 
 def summarize(queue,now=None):
     now=time.monotonic() if now is None else now
-    rows=[];transfers=[];speed=0.;total=done=0.;unknown=0
+    rows=[];transfers=[];verifications=[];speed=0.;total=done=0.;unknown=0
     for task_id,base in getattr(queue,'batch_rows',getattr(queue,'entries',{})).items():
         row={**base,**queue.snapshots.get(task_id,{})}
         row['state']=base['state']
         if row['state']=='cancelled':continue
         percent=number(row.get('download_percent'));row['download_percent']=min(100.,percent) if percent is not None else None
         rows.append(row);rate=row_speed(queue,row,now)
+        if task_id in queue.active and row['state'] not in ('paused','failed','cancelled','completed') and row.get('phase')=='verify':verifications.append(row)
         if rate is not None:
             transfers.append({**row,'live_speed':rate});speed+=rate
         size=number(row.get('total_bytes'))
@@ -57,14 +58,18 @@ def summarize(queue,now=None):
     active=sum(row['id'] in queue.active for row in rows)
     return {'speed':speed,'percent':percent,'unknown':unknown,'count':len(rows),'completed':completed,
             'queued':len(queue.waiting),'active':active,'processing':max(0,active-len(transfers)),
-            'paused':sum(row['state'] in ('paused','failed') for row in rows),'failed':sum(row['state']=='failed' for row in rows),'transfers':transfers}
+            'paused':sum(row['state'] in ('paused','failed') for row in rows),'failed':sum(row['state']=='failed' for row in rows),'transfers':transfers,'verifications':verifications}
 
 
 def overview(stats):
     if stats.get('paused') and not stats['active'] and not stats['queued']:
         return f"待继续 {stats['paused']-stats.get('failed',0)} · 失败 {stats.get('failed',0)}"
     progress='本轮下载完成' if stats['completed'] else f"本轮下载 {stats['percent']:.1f}%" if stats['percent'] is not None else '本轮总量未知' if stats['count'] else '本轮暂无任务'
-    return f"{progress} · 活动 {stats['active']} · 排队 {stats['queued']} · 解析/处理 {stats['processing']}"
+    verifying=stats.get('verifications',[])
+    if len(verifying)==1 and stats['active']==1:
+        from task_progress import detail,percentage
+        value=percentage(verifying[0]);return detail(verifying[0])+(f' · {value:.1f}%' if value is not None else '')
+    return f"{progress} · 活动 {stats['active']} · 排队 {stats['queued']} · 解析/处理 {stats['processing']}"+(f' · 校验 {len(verifying)}' if verifying else '')
 
 
 class LivePresentation:

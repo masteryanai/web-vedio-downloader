@@ -654,7 +654,10 @@ def resume_verification(task,progress=None,cancel=None,log=None):
         result=_verify(media,{'duration':checkpoint['duration']},checkpoint['selected'],report,cancel)
         _check_cancel(cancel)
         result['path']=str(_publish(media,Path(task['output']),task.get('library_title') or task['title'],cancel,checkpoint['extension']))
-        task.pop('verification',None);task.update(state='completed',stage='已完成',result=result);tasks.save(task);tasks.finish(task)
+        task.pop('verification',None);task.update(state='completed',stage='已完成',phase='complete',result=result);tasks.save(task)
+        try:tasks.finish(task)
+        except OSError as error:
+            if log:log(f'视频已校验并保存，任务缓存清理失败：{error}')
         _progress(progress,100,'下载完成',phase='complete',download_percent=100)
         return result
     except Exception:
@@ -970,7 +973,7 @@ def download_video(info, format_id, output_dir, cookies=None, progress=None, log
             if progress: progress(data)
         try:
             result = _perform_download(info, format_id, output_dir, cookies, report, log, cancel, tasks.work_path(task))
-            task.update(state='completed', result=result); tasks.save(task)
+            task.pop('verification',None);task.update(state='completed',stage='已完成',phase='complete', result=result); tasks.save(task)
         except Exception:
             task['state'] = 'paused' if cancel is not None and cancel.is_set() else 'failed'
             if task.get('verification'):task['stage']='待校验'

@@ -10,7 +10,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import zipfile
-from runtime import APP_VERSION, app_data_dir, resource_path, PRODUCT_ID, EXECUTABLE, UPDATE_MANIFEST,package_name
+from runtime import APP_VERSION, app_data_dir, resource_path, PRODUCT_ID, EXECUTABLE, UPDATE_MANIFEST,package_name,IS_LITE,EDITION
 
 REPO = 'masteryanai/web-vedio-downloader'
 API = f'https://api.github.com/repos/{REPO}/releases/latest'
@@ -65,6 +65,7 @@ def check_update():
 def validate_manifest(manifest, tag):
     if not isinstance(manifest, dict) or manifest.get('version') != tag.lstrip('v') or manifest.get('application') != PRODUCT_ID:
         raise RuntimeError('更新信息与发布版本不一致。')
+    if IS_LITE and manifest.get('edition')!=EDITION:raise RuntimeError('更新组件版本与当前轻量版不一致。')
     digest=manifest.get('sha256')
     if not isinstance(digest,str) or not re.fullmatch('[0-9a-f]{64}',digest):
         raise RuntimeError('更新包缺少有效校验信息。')

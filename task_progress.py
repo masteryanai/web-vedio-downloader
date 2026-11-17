@@ -10,6 +10,7 @@ def clock(value):
     value=max(0,int(value or 0));return f'{value//3600:02}:{value%3600//60:02}:{value%60:02}'
 
 def detail(task):
+    if task.get('state')=='completed':return '已完成 · 可播放' if task.get('result',{}).get('verified') else '已完成'
     if task.get('phase')=='verify' or task.get('verification'):
         text='完整性校验'
         duration=task.get('verification_duration')

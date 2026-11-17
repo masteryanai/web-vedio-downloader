@@ -1,6 +1,6 @@
 """Progressive disclosure for a single cancellable add window."""
-from PySide6.QtCore import QObject,QTimer
-from PySide6.QtWidgets import QLabel,QPushButton,QHBoxLayout,QWidget,QComboBox,QLineEdit,QCheckBox
+from PySide6.QtCore import QObject,QTimer,Qt
+from PySide6.QtWidgets import QLabel,QPushButton,QHBoxLayout,QVBoxLayout,QWidget,QComboBox,QLineEdit,QCheckBox
 
 class AddFlow(QObject):
     def __init__(self,workspace,content):
@@ -8,6 +8,17 @@ class AddFlow(QObject):
         self.content=content;self.result_url=None;self.page='link';self.waiting_batch=False
         self.sources=[];self.active_source=None;self.current_source=None;self.rendering=False;self.advance=False;self.submitting=[];self.total_added=0
         layout=content.layout();self.link_card=self.window.url_input.parentWidget();self.video_card=self.window.quality.parentWidget()
+        def hide_header(items):
+            for i in range(items.count()):
+                item=items.itemAt(i)
+                if item.widget():item.widget().hide()
+                elif item.layout():hide_header(item.layout())
+        hide_header(layout.itemAt(0).layout())
+        self.result_header=QWidget();header=QHBoxLayout(self.result_header);header.setContentsMargins(0,0,0,0)
+        self.cover=QLabel('封面');self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter);self.cover.setFixedSize(84,112);self.cover.setStyleSheet('background:#223342;color:#c4d6e5;');header.addWidget(self.cover)
+        self.result_title=QLabel();self.result_title.setWordWrap(True);self.result_title.setObjectName('sectionTitle');header.addWidget(self.result_title,1);layout.insertWidget(1,self.result_header);self.result_header.hide();self.cover_generation=0
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.link_card.layout().setAlignment(Qt.AlignmentFlag.AlignTop)
         self.status_card=self.window.status_text.parentWidget();self.window.log_box.hide();self.status_card.hide()
         self.message=QLabel();self.message.setWordWrap(True);layout.addWidget(self.message)
         self.sources_box=QComboBox();self.sources_box.currentIndexChanged.connect(self.select_source);layout.insertWidget(2,self.sources_box);self.sources_box.hide()
@@ -21,14 +32,29 @@ class AddFlow(QObject):
 
     def show_link(self):
         self.page='link';self.link_card.show();self.ws.add_controls.hide();self.video_card.hide();self.back.hide()
+        self.result_header.hide();self.cover_generation+=1
         self.sources_box.hide();self.retry.hide();self.validate.hide()
-        self.dialog.resize(660,360);self.dialog.setWindowTitle('添加下载 · 粘贴链接')
+        self.dialog.setMinimumSize(600,340);self.dialog.resize(660,360);self.dialog.setWindowTitle('添加下载 · 粘贴链接')
 
     def show_results(self):
         if self.sources and not self.rendering and self.active_source is not None:
             source=self.sources[self.active_source];source.update(info=self.window.info,status='ready',error='');self.advance=True;self.show_link();return
         self.result_url=self.window.url_input.toPlainText();self.page='results'
+        self.dialog.setMinimumSize(780,600)
         self.link_card.hide();self.ws.add_controls.show();self.video_card.show();self.back.show()
+        self.result_title.setText(self.window.info.get('title','选择下载内容'));self.result_header.show()
+        from runtime import IS_LITE
+        self.cover.setVisible(not IS_LITE)
+        if not IS_LITE:
+            self.cover_generation+=1;generation=self.cover_generation;self.cover.clear();self.cover.setText('原站封面\n暂不可用')
+            group=self.window.info.get('_collection',{});url=group.get('cover') or self.window.info.get('thumbnail')
+            if url:
+                from library_assets import image_file
+                def loaded(path):
+                    if generation!=self.cover_generation:return
+                    from PySide6.QtGui import QPixmap
+                    self.cover.setPixmap(QPixmap(path).scaled(self.cover.size(),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
+                self.ws.jobs.start(lambda cancel:image_file(url,cancel.is_set),loaded,lambda error:None)
         self.dialog.resize(980,760);self.dialog.setWindowTitle('添加下载 · 选择内容')
         from motion import reveal
         reveal(self.dialog)
@@ -59,7 +85,7 @@ class AddFlow(QObject):
                 self.message.setText(f'已加入 {self.total_added} 项；仍有待处理链接，可选择重试或前往验证。');return
         if errors:
             self.message.setText(f'已加入 {count} 项，其他项目未加入：\n'+'\n'.join(errors[:6]));return
-        self.dialog.hide();self.ws.status.setText(f'已添加 {count} 项 · 查看下载任务')
+        self.dialog.hide();self.ws.status.setText(f'已添加 {self.total_added if self.sources else count} 项 · 查看下载任务')
 
     def start_urls(self,urls,automatic=False):
         self.sources=[{'url':url,'info':None,'status':'pending','error':''} for url in urls]
@@ -113,7 +139,12 @@ class AddFlow(QObject):
                     if found>=0:widget.setCurrentIndex(found)
                 elif isinstance(widget,QCheckBox):widget.setChecked(value[name])
             for i,(state,mapping) in enumerate(value.get('rows',[])):
-                if i<controls.table.rowCount():controls.table.item(i,0).setCheckState(state)
+                if i<controls.table.rowCount():
+                    controls.table.item(i,0).setCheckState(state)
+                    if controls.table.columnCount()>2 and controls.table.item(i,2):
+                        from PySide6.QtCore import Qt
+                        item=controls.table.item(i,2);item.setData(Qt.ItemDataRole.UserRole,mapping)
+                        item.setText(next((label for label,key in controls.mapping_delegate.options if key==mapping),item.text()))
             self.message.setText(source.get('error') or '选择内容后加入下载队列。')
         else:
             self.show_link();self.message.setText(source['error']);self.retry.show();self.validate.show()

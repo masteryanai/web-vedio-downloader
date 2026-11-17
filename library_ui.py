@@ -281,10 +281,15 @@ class AddControls(QFrame):
         manage=QPushButton('管理库');manage.clicked.connect(workspace.storage);line.addWidget(manage);layout.addLayout(line)
         line=QHBoxLayout();self.height=QComboBox()
         for n in (2160,1440,1080,720,480,360):self.height.addItem(str(n)+'P 优先',n)
-        self.height.setCurrentIndex(2);self.strict=QCheckBox('严格画质：缺失时跳过');line.addWidget(self.height);line.addWidget(self.strict);layout.addLayout(line)
-        self.merge=QComboBox();self.merge.addItem('新建或更新同来源作品',None);self.merge.currentIndexChanged.connect(self.rebuild_mapping);layout.addWidget(self.merge)
+        import preferences
+        self.height.setCurrentIndex(max(0,self.height.findData(preferences.load()['last_quality_height'])));self.strict=QCheckBox('严格画质：缺失时跳过');line.addWidget(self.height);line.addWidget(self.strict);layout.addLayout(line)
+        self.advanced_button=QPushButton('高级选项：来源合并与严格画质 ▸');self.advanced_button.setCheckable(True);layout.addWidget(self.advanced_button)
+        self.advanced=QWidget();advanced_layout=QVBoxLayout(self.advanced);advanced_layout.setContentsMargins(0,0,0,0);advanced_layout.addWidget(self.strict)
+        self.merge=QComboBox();self.merge.addItem('新建或更新同来源作品',None);self.merge.currentIndexChanged.connect(self.rebuild_mapping);advanced_layout.addWidget(self.merge);layout.addWidget(self.advanced);self.advanced.hide()
+        self.advanced_button.toggled.connect(self.advanced.setVisible)
         self.route=QComboBox();self.route.currentIndexChanged.connect(self.change_route);layout.addWidget(self.route);self.route.hide()
         self.notice=QLabel('解析后在这里选择合集；原站不提供合集时保留单集下载。');self.notice.setWordWrap(True);layout.addWidget(self.notice)
+        self.existing=QPushButton('已在库中 · 打开详情');self.existing.hide();self.existing.clicked.connect(self.open_existing);layout.addWidget(self.existing);self.existing_work=None
         self.table=QTableWidget(0,3);self.table.setHorizontalHeaderLabels(['选集','本地状态','合并对应选集'])
         self.mapping_delegate=MappingDelegate(self.table);self.table.setItemDelegateForColumn(2,self.mapping_delegate)
         self.table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch);self.table.setMinimumHeight(160);layout.addWidget(self.table)
@@ -300,7 +305,8 @@ class AddControls(QFrame):
         try:data=self.ws.store.read()
         except (ValueError,OSError):self.notice.setText('程序索引读取失败，请从管理库入口修复索引并重新添加已有库。');return
         for lib in data['libraries']:self.library.addItem(lib['label']+'  ·  '+lib['path'],lib['id'])
-        index=self.library.findData(old)
+        import preferences
+        index=self.library.findData(old or preferences.load()['last_library_id'])
         if index>=0:self.library.setCurrentIndex(index)
     def receive(self,info):
         from collection_media import single
@@ -312,6 +318,7 @@ class AddControls(QFrame):
         self.season.setEnabled(c.get('kind')!='images')
         if c.get('kind')=='images':self.season.clear()
         data=self.ws.store.read();key=source_key(c['site'],c['key'],c.get('variant',''));work=next((w for w in data['works'] if any(s['key']==key for s in w['sources'])),None)
+        self.existing_work=work['id'] if work else None;self.existing.setVisible(bool(work))
         self.merge.blockSignals(True);self.merge.clear();self.merge.addItem('新建或更新同来源作品',None)
         for w in data['works']:
             if w['id']!=(work or {}).get('id') and w['kind']==c.get('kind','video'):self.merge.addItem('确认合并到：'+w['title']+' '+w['season'],w['id'])
@@ -328,13 +335,17 @@ class AddControls(QFrame):
             item=QTableWidgetItem(e['title']);item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable);item.setCheckState(Qt.CheckState.Unchecked if state in ('已下载','已在队列','存储库离线','磁盘离线') else Qt.CheckState.Checked);self.table.setItem(i,0,item)
             status=QTableWidgetItem(state);status.setFlags(status.flags()&~Qt.ItemFlag.ItemIsEditable);self.table.setItem(i,1,status)
         self.rebuild_mapping();self.notice.setText(f"发现 {len(c['entries'])} 个选集。默认跳过已下载/已排队；缺少季信息时请填写季名，单部作品可留空。")
+        if self.table.rowCount() and all(self.table.item(i,1).text()=='已下载' for i in range(self.table.rowCount())):self.notice.setText('全部内容已在库中。可打开详情播放；另存画质请在详情中明确选择，不会自动覆盖。')
         if len(c['entries'])>1 and not self.season.text():self.season.setFocus()
+    def open_existing(self):
+        if self.existing_work:self.ws.show_work(self.existing_work);self.ws.add_dialog.hide()
     def change_route(self):
         if not self.collection or not self.route.currentData():return
         c=copy.deepcopy(self.collection);c['line']=self.route.currentData();c['variant']=c['line'];c['entries']=c['routes'][c['line']];c['url']=c['entries'][0]['url']
         name,season=self.name.text(),self.season.text();self.receive({**self.window.info,'_collection':c});self.name.setText(name);self.season.setText(season)
     def rebuild_mapping(self):
         work_id=self.merge.currentData();episodes=[e for e in self.ws.store.read()['episodes'] if e['work_id']==work_id]
+        self.table.setColumnHidden(2,not bool(work_id))
         self.mapping_delegate.options=[('确认为新增选集','__new__')]+[(e['label'],e['id']) for e in episodes]
         def number(label):
             m=re.search(r'第\s*(\d+)\s*[集话期]',label);return int(m[1]) if m else None
@@ -357,6 +368,7 @@ class AddControls(QFrame):
             self.table.item(i,0).setCheckState(Qt.CheckState.Checked if state and allowed else Qt.CheckState.Unchecked)
     def submit(self):
         if not self.collection:raise ValueError('请先解析链接。')
+        if not any(self.table.item(i,0).checkState()==Qt.CheckState.Checked for i in range(self.table.rowCount())):raise ValueError('请选择要下载的内容；已下载的内容可从详情打开。')
         if self.library.currentData() is None:raise ValueError('请先添加存储库。')
         if len(self.collection['entries'])>1 and not self.season.text().strip():raise ValueError('网站没有明确季信息，请填写季名（播放线路不是季）。')
         mapping={}
@@ -369,6 +381,8 @@ class AddControls(QFrame):
         self.submitted_episode_ids=eids
         kind=self.window.quality.currentData() if self.window.info.get('_kind')=='images' else None
         policy={'height':self.height.currentData(),'strict':self.strict.isChecked(),'kind':kind}
+        import preferences
+        preferences.update(last_quality_height=self.height.currentData(),last_library_id=self.library.currentData())
         count=self.ws.enqueue(wid,selected,policy,self.window.info)
         self.ws.refresh(force=True);self.ws.show_work(wid);self.ws.cache_covers(wid);return count
 
@@ -699,27 +713,30 @@ class Workspace(QObject):
         if len(episode_ids)>20 and not allow_existing:return self.enqueue_large(wid,episode_ids,policy,info)
         work=self.store.work(wid);folder=self.store.output(wid);count=0;skipped=[]
         for eid in episode_ids:
-            ep=self.store.episode(eid)
-            if self.ep_active(ep) or self.states.get(eid)=='已下载' and not allow_existing:continue
-            sources=ep['sources'];preferred=work.get('default_source')
-            source=next((s for s in sources if s['source']==preferred),None) if preferred else (sources[0] if sources else None)
-            if not source or not source['url']:skipped.append(ep['label']+'：所选来源没有该集，请明确切换来源。');continue
-            if ep.get('files') and self.store.file_state(ep) in (('存储库离线','磁盘离线') if allow_existing else ('已下载','存储库离线','磁盘离线')):continue
-            # Recover the existing task instead of creating another task and cache.
-            previous=None
-            if ep.get('task_id') and not allow_existing:
-                try:previous=tasks.load(ep['task_id'])
-                except (OSError,ValueError):pass
-            if previous and previous['state'] not in tasks.TERMINAL:
-                cookies=self.window.accounts.cookies_for(previous['site']) if previous['site'] in __import__('runtime').SITES else []
-                if self.window.queue.enqueue(previous['id'],cookies):count+=1
-                continue
-            title=work['title']+(' '+work['season'] if work['season'] else '')+' '+ep['label']
-            payload=info if info and info['url']==source['url'] else None
-            stub={'url':source['url'],'site':source['site'],'title':title,'formats':[]}
-            task=tasks.create(stub,'library-auto',str(folder));task.update(quality_policy=policy,library_title=title,library_episode=eid);tasks.save(task)
-            self.store.bind(eid,task['id']);cookies=self.window.accounts.cookies_for(source['site']) if source['site'] in __import__('runtime').SITES else []
-            if self.window.queue.enqueue(task['id'],cookies,payload):count+=1
+            try:
+                ep=self.store.episode(eid)
+                if self.ep_active(ep) or self.states.get(eid)=='已下载' and not allow_existing:continue
+                sources=ep['sources'];preferred=work.get('default_source')
+                source=next((s for s in sources if s['source']==preferred),None) if preferred else (sources[0] if sources else None)
+                if not source or not source['url']:skipped.append(ep['label']+'：所选来源没有该集，请明确切换来源。');continue
+                if ep.get('files') and self.store.file_state(ep) in (('存储库离线','磁盘离线') if allow_existing else ('已下载','存储库离线','磁盘离线')):continue
+                # Recover the existing task instead of creating another task and cache.
+                previous=None
+                if ep.get('task_id') and not allow_existing:
+                    try:previous=tasks.load(ep['task_id'])
+                    except (OSError,ValueError):pass
+                if previous and previous['state'] not in tasks.TERMINAL:
+                    cookies=self.window.accounts.cookies_for(previous['site']) if previous['site'] in __import__('runtime').SITES else []
+                    if self.window.queue.enqueue(previous['id'],cookies):count+=1
+                    continue
+                title=work['title']+(' '+work['season'] if work['season'] else '')+' '+ep['label']
+                payload=info if info and info['url']==source['url'] else None
+                stub={'url':source['url'],'site':source['site'],'title':title,'formats':[]}
+                task=tasks.create(stub,'library-auto',str(folder));task.update(quality_policy=policy,library_title=title,library_episode=eid);tasks.save(task)
+                self.store.bind(eid,task['id']);cookies=self.window.accounts.cookies_for(source['site']) if source['site'] in __import__('runtime').SITES else []
+                if self.window.queue.enqueue(task['id'],cookies,payload):count+=1
+            except (OSError,ValueError,RuntimeError) as error:
+                skipped.append(str(eid)+'：'+str(error))
         self.last_enqueue_errors=skipped
         if skipped:self.window.append_log('\n'.join(skipped))
         return count

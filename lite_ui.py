@@ -48,6 +48,7 @@ class DownloadSelection(QFrame):
 
     def submit(self):
         if not self.collection:raise ValueError('请先解析链接。')
+        if not any(self.table.item(i,0).checkState()==Qt.CheckState.Checked for i in range(self.table.rowCount())):raise ValueError('请选择要下载的内容；已完成文件可从下载历史打开。')
         base=Path(self.window.output_path.text()).expanduser()
         if not base.is_absolute():raise ValueError('请选择完整的保存路径。')
         title=self.name.text().strip()

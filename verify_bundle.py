@@ -9,7 +9,11 @@ def verify(root, bundle=None):
     bundle = Path(bundle) if bundle is not None else root / 'build' / 'release-output' / 'WebVideoDownloader'
     from build_guard import check_output
     check_output(bundle, packaging=True)
-    archive = CArchiveReader(str(bundle / 'WebVideoDownloader.exe'))
+    import json
+    from product_identity import render_for,PRODUCTS
+    meta_path=bundle/'_internal/product.json'
+    meta=json.loads(meta_path.read_text(encoding='utf-8')) if meta_path.exists() else {'product':'manager','edition':'full'}
+    archive = CArchiveReader(str(bundle / (PRODUCTS[meta['product']][0]+'.exe')))
     pyz = archive.open_embedded_archive(next(name for name in archive.toc if name.startswith('PYZ')))
     checked = []
     for source in sorted(root.glob('*.py')):
@@ -28,7 +32,9 @@ def verify(root, bundle=None):
     if main != expected:
         raise RuntimeError('冻结入口与源码不一致：main')
     for name in ('update_install.ps1', 'update_window.ps1', 'recovery.ps1'):
-        if (bundle / '_internal' / name).read_bytes() != (root / name).read_bytes():
+        actual=(bundle/'_internal'/name).read_text(encoding='utf-8-sig')
+        expected=render_for((root/name).read_text(encoding='utf-8-sig'),meta['product'],meta.get('edition','full'))
+        if actual != expected:
             raise RuntimeError(f'安装资源与源码不一致：{name}')
     print(f'冻结入口、{len(checked)} 个本项目模块与安装资源均与源码一致。')
 

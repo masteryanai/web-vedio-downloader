@@ -7,7 +7,7 @@ STABLE_RUNTIME = r'D:\Project\tools\WebVideoDownloader'
 RESERVED = {'data', '.wvd', '.wvd-library', '.portable-data.json', 'library.json',
             'settings.json', 'tasks.json', 'queue.json', 'sessions.json', 'library.db', 'catalogue.json', 'sessions.dpapi', 'download-tasks', 'adapted-sites.json'}
 MEDIA = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.part', '.srt', '.ass', '.mp3', '.flac'}
-ROOT_PROGRAM = {'webvideodownloader.exe', '_internal', 'readme.md', 'licenses.md', '修复与回退.cmd'}
+ROOT_PROGRAM = {'webvideodownloader.exe','webvideodownloaderlite.exe', '_internal', 'readme.md', 'licenses.md', '修复与回退.cmd'}
 PLAYWRIGHT_TYPES = {'_internal/playwright/driver/package/'+name for name in
                     ('index.d.ts','types/protocol.d.ts','types/structs.d.ts','types/types.d.ts')}
 
@@ -28,7 +28,7 @@ def _reject(path):
 def check_output(folder, *, packaging=False):
     """Fail before COLLECT can remove an output, including via direct spec usage."""
     root=Path(os.path.abspath(folder))
-    if os.path.normcase(str(root))==os.path.normcase(os.path.abspath(STABLE_RUNTIME)): _reject(root)
+    if os.path.normcase(str(root)) in {os.path.normcase(os.path.abspath(STABLE_RUNTIME)),os.path.normcase(os.path.abspath(STABLE_RUNTIME+'Lite'))}: _reject(root)
     # Inspect ancestors top down: do not lstat a child through an unchecked junction.
     for path in [*reversed(root.parents), root]:
         try: info=path.lstat()
