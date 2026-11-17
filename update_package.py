@@ -45,16 +45,47 @@ def backup_info(install):
         if folder.parent!=root.parent or not folder.name.startswith(root.name+'.backup-') or folder.is_symlink():return None
         marker=json.loads((folder/'backup-info.json').read_text(encoding='utf-8-sig'))
         if marker.get('application')!=APPLICATION or marker.get('install_dir','').casefold()!=str(root).casefold() or marker.get('token')!=info.get('token'):return None
+        if not isinstance(marker.get('token'),str) or not re.fullmatch('[0-9a-f]{32}',marker['token']):return None
         inv=validate_inventory(json.loads((folder/'inventory.json').read_text(encoding='utf-8-sig')))
-        if inv['version']!=info['version']:return None
+        if inv['version']!=info['version'] or inv['version']!=marker.get('version'):return None
+        kind=marker.get('format')
+        if kind is None:
+            if set(marker)!={'application','install_dir','token','version'}:return None
+            owned=None
+        elif kind=='partial-v1':
+            if set(marker)!={'application','install_dir','token','version','format','owned_files','inventory_sha256'}:return None
+            if marker.get('inventory_sha256')!=digest(folder/'inventory.json'):return None
+            rows=marker.get('owned_files')
+            if not isinstance(rows,list) or len(rows)>20001:return None
+            owned=set()
+            for row in rows:
+                if not isinstance(row,dict) or set(row)!={'path','size','sha256'}:return None
+                name=row['path'];owned_path(folder,name)
+                if name.casefold() in owned or type(row['size']) is not int or not 0<=row['size']<=8589934592 or not re.fullmatch('[0-9a-f]{64}',row['sha256']):return None
+                owned.add(name.casefold())
+        else:return None
         current=installed_inventory(root)
         if current and current['data_schema']!=inv['data_schema']:return None
         try:
             catalog=json.loads((app_data_dir()/'updates'/'release-catalog.json').read_text(encoding='utf-8'))
             if inv['version'] in catalog.get('revoked_versions',[]):return None
         except (OSError,ValueError,TypeError):pass
-        return {**info,'inventory':inv}
+        return {**info,'inventory':inv,'owned_files':owned,'install':str(root)}
     except (OSError,ValueError,KeyError,TypeError):return None
+
+
+def backup_sources(backup,cancel=None,progress=None):
+    """Resolve every old file from an owned backup or verified unchanged install."""
+    sources={};rows=backup['inventory']['files'];owned=backup['owned_files']
+    for number,row in enumerate(rows):
+        if cancel and cancel.is_set():raise RuntimeError('已取消更新。')
+        root=backup['folder'] if owned is None or row['path'].casefold() in owned else backup['install']
+        source=owned_path(root,row['path'])
+        if not source.is_file() or source.stat().st_size!=row['size'] or digest(source)!=row['sha256']:
+            raise ValueError('本地备份或复用的程序文件校验失败：'+row['path'])
+        sources[row['path']]=source
+        if progress:progress({'phase':'verify','files_done':number+1,'files_total':len(rows),'stage':'校验本地回退资料'})
+    return sources
 
 
 def history(manifest):
@@ -97,8 +128,11 @@ def select(info,install=None,cancel=None,progress=None,allow_full=False):
     if operation=='rollback':
         if not info.get('rollback_allowed') or target['data_schema']!=(base or {}).get('data_schema',1):raise ValueError('该历史版本不允许回退。')
         backup=backup_info(install)
-        if backup and backup['version']==target['version'] and verify_tree(backup['folder'],target,cancel,progress)[0]:
-            return {'mode':'local','reason':'使用已校验的本地备份，无需下载','target':target,'base':base,'backup':backup,'size':0}
+        if backup and backup['version']==target['version'] and backup['inventory']['files']==target['files']:
+            try:sources=backup_sources(backup,cancel,progress)
+            except (OSError,ValueError):sources=None
+            if sources is not None:
+                return {'mode':'local','reason':'使用已校验的本地备份，无需下载','target':target,'base':base,'backup':backup,'sources':sources,'size':0}
     if info.get('local_restore'):raise ValueError('本地备份校验失败，请改用历史完整包。')
     delta=next((d for d in manifest.get('deltas',[]) if d.get('from_version')==APP_VERSION),None) if operation=='upgrade' else None
     reason=manifest.get('force_full_reason') or '此版本要求完整更新' if manifest.get('force_full') else manifest.get('full_only_from',{}).get(APP_VERSION,'')
@@ -134,7 +168,7 @@ def _prepare(info,cancel,progress):
     if plan['mode']=='local':
         for i,row in enumerate(plan['target']['files']):
             if cancel.is_set():raise RuntimeError('已取消更新。')
-            source=owned_path(plan['backup']['folder'],row['path']);dest=owned_path(payload,row['path']);dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest)
+            source=plan['sources'][row['path']];dest=owned_path(payload,row['path']);dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest)
             if i%25==0 or i+1==len(plan['target']['files']):progress({'phase':'copy','percent':int((i+1)*100/len(plan['target']['files'])),'stage':'准备本地备份恢复','files_done':i+1,'files_total':len(plan['target']['files'])})
     else:
         desc=plan['package'];cache=update_cache.package_dir(folder,desc['sha256']);archive=cache/'package.zip'

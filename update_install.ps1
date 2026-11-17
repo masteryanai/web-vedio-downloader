@@ -153,20 +153,23 @@ try {
     $all=@{};foreach($row in $base.files){$all[$row.path]=$true};foreach($row in $target.files){$all[$row.path]=$true};$all['_internal/installation.json']=$true
     Phase 'backup'
     foreach($name in $all.Keys){$original[$name]=[IO.File]::Exists((Safe $root $name))}
-    $backupTotal=@($all.Keys | Where-Object {$original[$_]}).Count;$backupDone=0
+    $targetRows=@{};foreach($row in $target.files){$targetRows[$row.path]=$row}
+    $ownedFiles=@();$backupTotal=@($all.Keys).Count;$backupDone=0
     foreach($name in $all.Keys){
         if($original[$name]){
             $file=Safe $root $name;$originalSizes[$name]=([IO.FileInfo]$file).Length
-            $originalHashes[$name]=CopyHashed $file (Safe $backup $name)
-            $backupDone++;Progress $backupDone $backupTotal $name
+            $originalHashes[$name]=Sha $file
+            if($name -eq '_internal/installation.json' -or -not $targetRows.ContainsKey($name) -or $originalHashes[$name] -ne $targetRows[$name].sha256){
+                if((CopyHashed $file (Safe $backup $name)) -ne $originalHashes[$name]){throw 'Program changed during backup.'}
+                $ownedFiles+=@{path=$name;sha256=$originalHashes[$name];size=$originalSizes[$name]}
+            }
         }
+        $backupDone++;Progress $backupDone $backupTotal $name
     }
     # Inventory retains the release baseline, so a damaged backup is never offered as verified.
     CopyFile $config.base_inventory (Join-Path $backup 'inventory.json')
-    @{application='WebVideoDownloader';install_dir=$root;token=$token;version=$base.version} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $backup 'backup-info.json') -Encoding UTF8
+    @{application='WebVideoDownloader';install_dir=$root;token=$token;version=$base.version;format='partial-v1';owned_files=@($ownedFiles);inventory_sha256=(Sha (Join-Path $backup 'inventory.json'))} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $backup 'backup-info.json') -Encoding UTF8
     $data=[IO.Path]::GetFullPath($config.data_dir);$updates=Join-Path $data 'updates';$null=New-Item -ItemType Directory -Force -Path $updates
-    $settings=Join-Path $data 'settings.json'
-    if(Test-Path -LiteralPath $settings -PathType Leaf){CopyFile $settings (Join-Path $backup 'settings-before-update.json')}
     $pendingFile=Join-Path $updates 'pending.json'
     @{application='WebVideoDownloader';install_dir=$root;folder=$backup;token=$token;version=$base.version;stage=$stage} | ConvertTo-Json | Set-Content -LiteralPath $pendingFile -Encoding UTF8
     Phase 'install'
@@ -178,6 +181,7 @@ try {
             $script:stats.reused_hashes++;$script:stats.avoided_read_bytes+=$originalSizes[$row.path]
             if($originalHashes[$row.path] -eq $row.sha256){$script:stats.skipped_files++;Progress $installDone $installTotal $row.path;continue}
         }
+        if($original[$row.path] -and -not [IO.File]::Exists((Safe $backup $row.path))){throw 'Missing rollback copy.'}
         $touched+=,$row.path;CopyFile (Safe $payload $row.path) $file;$count++
         if($FailAfter -gt 0 -and $count -ge $FailAfter){throw 'Injected installation failure.'}
         Progress $installDone $installTotal $row.path
@@ -218,11 +222,27 @@ try {
             $prior=[IO.Path]::GetFullPath($old.folder)
             if((Split-Path -Parent $prior) -eq (Split-Path -Parent $root) -and (Split-Path -Leaf $prior).StartsWith((Split-Path -Leaf $root)+'.backup-')){
                 $marker=Get-Content -LiteralPath (Join-Path $prior 'backup-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-                if($marker.application -eq 'WebVideoDownloader' -and $marker.token -eq $old.token -and $marker.install_dir -eq $root){
-                    $previous=Get-Content -LiteralPath (Join-Path $prior 'inventory.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-                    foreach($row in $previous.files){$file=Safe $prior $row.path;if([IO.File]::Exists($file)){Remove-Item -LiteralPath $file -Force}}
-                    foreach($name in @('_internal/installation.json')){$file=Safe $prior $name;if([IO.File]::Exists($file)){Remove-Item -LiteralPath $file -Force}}
-                    foreach($name in @('inventory.json','backup-info.json','settings-before-update.json')){$file=Join-Path $prior $name;if([IO.File]::Exists($file)){Remove-Item -LiteralPath $file -Force}}
+                if($marker.application -eq 'WebVideoDownloader' -and $marker.token -eq $old.token -and $marker.token -match '^[a-f0-9]{32}$' -and $marker.install_dir -eq $root){
+                    $inventoryFile=Join-Path $prior 'inventory.json';$previous=Inventory $inventoryFile (Sha $inventoryFile)
+                    if($marker.version -ne $previous.version -or $old.version -ne $previous.version){throw 'Backup version mismatch.'}
+                    $owned=@()
+                    if($null -eq $marker.format){
+                        if(@($marker.PSObject.Properties).Count -ne 4 -or $null -ne $marker.owned_files -or $null -ne $marker.inventory_sha256){throw 'Unknown backup metadata.'}
+                        $owned=@($previous.files)
+                        $installation=Safe $prior '_internal/installation.json'
+                        if([IO.File]::Exists($installation)){
+                            if((Sha $installation) -ne (Sha $inventoryFile)){throw 'Changed legacy installation inventory retained.'}
+                            $owned+=@{path='_internal/installation.json';sha256=(Sha $installation);size=([IO.FileInfo]$installation).Length}
+                        }
+                    }elseif($marker.format -ceq 'partial-v1'){
+                        if(@($marker.PSObject.Properties).Count -ne 7 -or (Sha $inventoryFile) -ne $marker.inventory_sha256 -or $null -eq $marker.owned_files -or @($marker.owned_files).Count -gt 20001){throw 'Backup inventory mismatch.'}
+                        $seen=@{}
+                        foreach($row in $marker.owned_files){$null=Safe $prior $row.path;if($seen.ContainsKey($row.path) -or $row.sha256 -notmatch '^[a-f0-9]{64}$' -or $null -eq $row.size -or $row.size -lt 0 -or $row.size -gt 8589934592 -or @($row.PSObject.Properties).Count -ne 3){throw 'Invalid backup files.'};$seen[$row.path]=$true}
+                        $owned=@($marker.owned_files)
+                    }else{throw 'Unknown backup format.'}
+                    foreach($row in $owned){$file=Safe $prior $row.path;if([IO.File]::Exists($file) -and (([IO.FileInfo]$file).Length -ne $row.size -or (Sha $file) -ne $row.sha256)){throw 'Changed backup file retained.'}}
+                    foreach($row in $owned){$file=Safe $prior $row.path;if([IO.File]::Exists($file)){Remove-Item -LiteralPath $file -Force}}
+                    foreach($name in @('inventory.json','backup-info.json')){$file=Join-Path $prior $name;if([IO.File]::Exists($file)){Remove-Item -LiteralPath $file -Force}}
                     Get-ChildItem -LiteralPath $prior -Directory -Recurse -Force | Sort-Object FullName -Descending | ForEach-Object {if(-not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and @(Get-ChildItem -LiteralPath $_.FullName -Force).Count -eq 0){Remove-Item -LiteralPath $_.FullName}}
                     if(@(Get-ChildItem -LiteralPath $prior -Force).Count -eq 0){Remove-Item -LiteralPath $prior}
                 }
