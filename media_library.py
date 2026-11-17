@@ -31,31 +31,175 @@ def safe_folder(path):
 def source_key(site,key,variant=''):return site+'|'+str(key)+('|线路:'+str(variant) if variant else '')
 
 
+class MetadataSaveError(OSError):
+    """Media/global index are retained; library recovery metadata needs retry."""
+
+
 class Catalogue:
-    def __init__(self):self.path=app_data_dir()/'library'/'catalogue.json'
+    task_snapshot_provider=None
+    task_restore_handler=None
+
+    def __init__(self):
+        self.path=app_data_dir()/'library'/'catalogue.json'
+        self._leases={};self._statuses={};self._mounting=False
+
+    def close(self):
+        for lease in self._leases.values():lease.close()
+        self._leases.clear()
+
+    def __del__(self):
+        try:self.close()
+        except Exception:pass
+
+    def library_status(self,key):
+        lib=next(v for v in self.read()['libraries'] if v['id']==key)
+        root=Path(lib['path'])
+        if not root.is_dir():return {'writable':False,'state':'offline','error':'存储库离线。','pending':False}
+        if not root.stat().st_mode & 0o222:return {'writable':False,'state':'read_only','error':'存储库只读。','pending':False}
+        if key not in self._leases:
+            try:
+                from library_archive import Lease
+                self._leases[key]=Lease(root)
+            except OSError as exc:return {'writable':False,'state':'read_only','error':'存储库只读或正被另一程序使用：'+str(exc),'pending':False}
+        return self._statuses.get(key,{'writable':True,'state':'ready','error':'','pending':False})
+
+    def persist_library(self,key,data=None):
+        from library_archive import snapshot,publish
+        data=data if data is not None else self.read();lib=next(v for v in data['libraries'] if v['id']==key)
+        status=self.library_status(key)
+        if not status['writable']:raise ValueError(status['error'])
+        try:
+            provider=self.task_snapshot_provider
+            if provider is None:
+                try:
+                    from library_tasks import snapshot_tasks
+                    provider=snapshot_tasks
+                except ImportError:pass
+            tasks=provider(key,Path(lib['path']),data) if provider else []
+            publish(lib['path'],snapshot(data,lib,app_data_dir(),tasks))
+            self._statuses[key]={'writable':True,'state':'ready','error':'','pending':False};return True
+        except (OSError,ValueError) as exc:
+            self._statuses[key]={'writable':True,'state':'pending','error':'视频已保存，恢复资料未保存，可重试：'+str(exc),'pending':True}
+            raise MetadataSaveError(self._statuses[key]['error']) from exc
+
+    def retry_persist(self,key):return self.persist_library(key)
+
+    def probe_library(self,path,recovery='current'):
+        from library_archive import DIRECTORY,load,materialize
+        root=safe_folder(path);folder=root/DIRECTORY
+        preview={'state':'empty','library_id':None,'label':root.name,'works':0,'episodes':0,'missing_files':[], 'histories':[],'conflict':None,'writable':os.access(root,os.W_OK),'error':'','sources_available':False,'needs_online_confirmation':recovery=='sources'}
+        for history in sorted((folder/'history').glob('*.json'),key=lambda p:p.stat().st_mtime_ns,reverse=True):
+            try:
+                value=load(history);preview['histories'].append({'id':history.stem,'works':len(value['works'])})
+            except (OSError,ValueError,KeyError):pass
+        try:load(folder/'sources.json');preview['sources_available']=True
+        except (OSError,ValueError,KeyError):pass
+        target=folder/('current.json' if recovery=='current' else 'sources.json' if recovery=='sources' else 'history/'+recovery.removeprefix('history:')+'.json')
+        if recovery not in ('current','sources') and not re.fullmatch('[a-f0-9]{32}',recovery.removeprefix('history:')):raise ValueError('无效历史标识。')
+        if not target.exists():
+            if folder.exists():preview.update(state='corrupt',error='恢复资料不存在。')
+            return preview
+        try:
+            payload=load(target);value=materialize(root,payload)
+            preview.update(state='valid',library_id=value['library']['id'],label=value['library'].get('label',root.name),works=len(value['works']),episodes=len(value['episodes']))
+            preview['missing_files']=[f['path'] for e in value['episodes'] for f in e.get('files',[]) if not Path(f['path']).is_file()]
+            old=next((v for v in self.read()['libraries'] if v['id']==preview['library_id'] and os.path.normcase(v['path'])!=os.path.normcase(str(root))),None)
+            if old:preview['conflict']={'id':old['id'],'path':old['path']}
+        except (OSError,ValueError,KeyError,TypeError) as exc:
+            preview.update(state='unknown' if '格式' in str(exc) else 'corrupt',error=str(exc))
+        return preview
+
+    def mount_library(self,path,mode='restore',recovery='current'):
+        from library_archive import DIRECTORY,load,materialize
+        if mode not in ('restore','relocate','clone'):raise ValueError('无效挂载方式。')
+        root=safe_folder(path);preview=self.probe_library(root,recovery)
+        if preview['state']!='valid':raise ValueError(preview['error'] or '没有可恢复的存储库资料。')
+        if preview['conflict'] and mode=='restore':raise ValueError('同一存储库已挂载，请选择搬家或独立副本。')
+        target=root/DIRECTORY/('current.json' if recovery=='current' else 'sources.json' if recovery=='sources' else 'history/'+recovery.removeprefix('history:')+'.json')
+        value=materialize(root,load(target));oldid=value['library']['id'];mapping={v['id']:v['id'] for v in [value['library'],*value['works'],*value['episodes']]}
+        if mode=='clone':
+            mapping={v['id']:identifier() for v in [value['library'],*value['works'],*value['episodes']]}
+            for w in value['works']:
+                w['id']=mapping[w['id']];w['library_id']=mapping[oldid]
+                for source in w.get('sources',[]):source['mapping']={k:mapping.get(v,v) for k,v in source.get('mapping',{}).items()}
+            for e in value['episodes']:e['id']=mapping[e['id']];e['work_id']=mapping[e['work_id']]
+            value['library']['id']=mapping[oldid]
+        libid=value['library']['id'];value['library']['path']=str(root)
+        handler=self.task_restore_handler
+        if handler is None:
+            try:
+                from library_tasks import restore_tasks
+                handler=restore_tasks
+            except ImportError:pass
+        for task in value.get('tasks',[]):
+            if task.get('id'):mapping.setdefault(task['id'],identifier() if mode=='clone' else task['id'])
+        if handler:
+            remap=handler(value.get('tasks',[]),root,mapping) or {}
+        else:remap={}
+        for e in value['episodes']:
+            e['task_ids']=[remap[t] for t in e.get('task_ids',[]) if t in remap];e['task_id']=remap.get(e.get('task_id'));e['synced_tasks']=[]
+            if e['task_id']:e['status']='已暂停'
+            elif e.get('status') in ('排队中','处理中'):e['status']='待继续'
+        with self.change(persist=False) as data:
+            if mode=='relocate':
+                lease=self._leases.pop(oldid,None)
+                if lease:lease.close()
+            data['libraries']=[v for v in data['libraries'] if v['id']!=libid]+[value['library']]
+            previous={w['id'] for w in data['works'] if w.get('library_id')==libid}
+            conflicts={w['id'] for w in data['works'] if w.get('library_id')!=libid}&{w['id'] for w in value['works']}
+            if conflicts:raise ValueError('作品身份与另一存储库冲突，请使用独立副本。')
+            data['works']=[w for w in data['works'] if w.get('library_id')!=libid]+value['works']
+            data['episodes']=[e for e in data['episodes'] if e['work_id'] not in previous]+value['episodes']
+        if recovery=='sources':
+            self._statuses[libid]={'writable':False,'state':'needs_online_confirmation','error':'请重新解析来源并确认匹配。','pending':False}
+        elif mode=='clone' or recovery!='current':
+            # Explicit history recovery may replace a damaged current record.
+            from library_archive import atomic,encode,snapshot,publish
+            if not self.library_status(libid)['writable']:raise ValueError('存储库不可写。')
+            payload=snapshot(self.read(),value['library'],app_data_dir(),value.get('tasks',[]))
+            if mode=='clone':publish(root,payload)
+            else:
+                atomic(root/DIRECTORY/'current.json',encode(payload));publish(root,payload)
+        return libid
 
     def read(self):
         with _gate:
             if not self.path.exists():return {'schema':1,'libraries':[],'works':[],'episodes':[]}
             data=json.loads(self.path.read_text(encoding='utf-8'))
-            if data.get('schema')!=1 or any(not isinstance(data.get(k),list) for k in ('libraries','works','episodes')):raise ValueError('影片库索引损坏，原文件已保留，请查看故障记录。')
+            if data.get('schema') not in (1,2) or any(not isinstance(data.get(k),list) for k in ('libraries','works','episodes')):raise ValueError('影片库索引损坏，原文件已保留，请查看故障记录。')
             return data
 
     @contextmanager
-    def change(self):
+    def change(self,persist=True):
         from diagnostics import file_lock
         with _gate:
             self.path.parent.mkdir(parents=True,exist_ok=True)
             with file_lock(self.path.parent):
                 data=self.read();before=copy.deepcopy(data);yield data
+                affected=[]
+                for lib in data['libraries']:
+                    key=lib['id'];oldlib=next((v for v in before['libraries'] if v['id']==key),None)
+                    def section(value):
+                        works=[w for w in value['works'] if w.get('library_id')==key];ids={w['id'] for w in works}
+                        return works,[e for e in value['episodes'] if e['work_id'] in ids]
+                    if persist and oldlib is not None and section(data)!=section(before):
+                        preview=self.probe_library(lib['path'])
+                        if preview['state'] in ('unknown','corrupt'):raise ValueError(preview['error'])
+                        status=self.library_status(key)
+                        if not status['writable']:raise ValueError(status['error'])
+                        affected.append(key)
+                    elif persist and oldlib is None:affected.append(key)
                 if data==before:return
+                data['schema']=2
                 temp=self.path.with_name('catalogue-'+identifier()+'.tmp')
                 try:temp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(self.path)
                 finally:temp.unlink(missing_ok=True)
+                for key in affected:self.persist_library(key,data)
 
     def library(self,path,label=''):
         root=safe_folder(path)
         if root==Path(root.anchor):raise ValueError('请选择磁盘下的专用影片目录。')
+        if (root/'.wvd-library').exists():return self.mount_library(root)
         root.mkdir(parents=True,exist_ok=True)
         with self.change() as data:
             old=next((v for v in data['libraries'] if os.path.normcase(v['path'])==os.path.normcase(str(root))),None)
@@ -64,8 +208,12 @@ class Catalogue:
 
     def remove_library(self,key):
         with self.change() as data:
-            if any(w.get('library_id')==key for w in data['works']):raise ValueError('该存储库仍有关联作品，请先迁移或移除作品记录。')
+            ids={w['id'] for w in data['works'] if w.get('library_id')==key}
             data['libraries']=[v for v in data['libraries'] if v['id']!=key]
+            data['works']=[w for w in data['works'] if w['id'] not in ids]
+            data['episodes']=[e for e in data['episodes'] if e['work_id'] not in ids]
+        lease=self._leases.pop(key,None)
+        if lease:lease.close()
 
     def ingest(self,collection,title,season,library_id=None,merge=None,mapping=None):
         """Explicit merge requires a source-entry -> existing episode mapping."""
@@ -117,7 +265,7 @@ class Catalogue:
                 path=Path(values[name])
                 if path.is_absolute():
                     try:values[name]=path.relative_to(app_data_dir()).as_posix()
-                    except ValueError:raise ValueError('封面必须先导入便携封面缓存。')
+                    except ValueError:values[name]=str(path)
         with self.change() as data:next(w for w in data['works'] if w['id']==key).update(values)
 
     def episode(self,key):return next(e for e in self.read()['episodes'] if e['id']==key)
@@ -127,6 +275,8 @@ class Catalogue:
         data=self.read();work=next(w for w in data['works'] if w['id']==key)
         lib=next((v for v in data['libraries'] if v['id']==work.get('library_id')),None)
         if lib is None:raise ValueError('请先为本季选择存储库。')
+        status=self.library_status(lib['id'])
+        if not status['writable']:raise ValueError(status['error'])
         root=safe_folder(lib['path'])
         if not root.is_dir():raise ValueError('存储库离线或目录不存在，请先重新连接，不会自动换盘。')
         folder=safe_folder(root/work['folder_name'])
@@ -190,6 +340,8 @@ class Catalogue:
         ep=self.episode(key);work=self.work(ep['work_id']);data=self.read()
         lib=next((v for v in data['libraries'] if v['id']==work.get('library_id')),None)
         if not lib or not Path(lib['path']).is_dir():raise ValueError('存储库离线。')
+        status=self.library_status(lib['id'])
+        if not status['writable']:raise ValueError(status['error'])
         root=safe_folder(lib['path'])
         for value in paths:
             file=next((f for f in ep['files'] if f['path']==value and not f['external']),None)
