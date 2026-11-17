@@ -1,10 +1,28 @@
 """Self describing, validated library records. No network or media deletion."""
-import copy,hashlib,json,os,uuid,stat
+import copy,hashlib,json,os,uuid,stat,threading,time
+from functools import wraps
 from pathlib import Path
 from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
 
 FORMAT=1
 DIRECTORY='.wvd-library'
+_io_lock=threading.RLock()
+
+def synchronized(function):
+ @wraps(function)
+ def guarded(*args,**kwargs):
+  with _io_lock:return function(*args,**kwargs)
+ return guarded
+
+def sharing_retry(operation):
+ delays=(.01,.02,.04,.08)
+ for attempt in range(len(delays)+1):
+  try:return operation()
+  except PermissionError as error:
+   if os.name!='nt' or getattr(error,'winerror',None) not in (5,32,33) or attempt==len(delays):raise
+   time.sleep(delays[attempt])
+
+def replace(source,target):return sharing_retry(lambda:os.replace(source,target))
 
 def reject_links(path):
  for part in (Path(path),*Path(path).parents):
@@ -30,6 +48,7 @@ def sanitize(value):
 
 def encode(payload):return {'format':FORMAT,'payload':payload,'sha256':hashlib.sha256(canonical(payload)).hexdigest()}
 
+@synchronized
 def load(path):
  reject_links(path)
  record=json.loads(Path(path).read_text(encoding='utf-8'))
@@ -51,11 +70,12 @@ def load(path):
   if any(not isinstance(f,dict) or not isinstance(f.get('path'),str) or f.get('location') not in ('library','external') for f in e.get('files',[])):raise ValueError('文件关联无效。')
  return payload
 
+@synchronized
 def atomic(path,value):
  path=Path(path);reject_links(path);path.parent.mkdir(parents=True,exist_ok=True);temp=path.with_name('.'+uuid.uuid4().hex+'.tmp')
  try:
   with temp.open('wb') as out:out.write(canonical(value));out.flush();os.fsync(out.fileno())
-  os.replace(temp,path)
+  replace(temp,path)
  finally:temp.unlink(missing_ok=True)
 
 _held_names=set()
@@ -122,12 +142,14 @@ def snapshot(data,lib,app_root,tasks=None):
  payload={'library':{k:v for k,v in lib.items() if k in ('id','label')},'works':works,'episodes':episodes,'tasks':tasks or []}
  return sanitize(payload)
 
+@synchronized
 def atomic_bytes(path,value):
  reject_links(path)
  temp=path.with_name('.'+uuid.uuid4().hex+'.tmp')
- try:temp.write_bytes(value);os.replace(temp,path)
+ try:temp.write_bytes(value);replace(temp,path)
  finally:temp.unlink(missing_ok=True)
 
+@synchronized
 def publish(root,payload):
  folder=Path(root)/DIRECTORY;reject_links(folder/'history');current=folder/'current.json'
  previous=load(current) if current.exists() else None
@@ -141,7 +163,7 @@ def publish(root,payload):
  if previous is not None:atomic(folder/'history'/(uuid.uuid4().hex+'.json'),encode(previous))
  atomic(current,encode(payload))
  histories=sorted((folder/'history').glob('*.json'),key=lambda p:p.stat().st_mtime_ns,reverse=True)
- for old in histories[3:]:old.unlink()
+ for old in histories[3:]:sharing_retry(old.unlink)
 
 def materialize(root,payload):
  result=copy.deepcopy(payload)
@@ -180,6 +202,7 @@ def freeze(root):
   _frozen[key]-=1
   if not _frozen[key]:del _frozen[key]
 
+@synchronized
 def publish_recovery(root,payload):
  """Publish an explicitly selected recovery, retaining corrupt original bytes."""
  folder=Path(root)/DIRECTORY;reject_links(folder/'history');current=folder/'current.json'
@@ -193,3 +216,22 @@ def publish_recovery(root,payload):
    quarantine=folder/'quarantine'/(uuid.uuid4().hex+'.json');quarantine.parent.mkdir(parents=True,exist_ok=True);atomic_bytes(quarantine,raw)
    atomic(current,encode(payload))
  publish(root,payload)
+
+_metadata_cache={}
+@synchronized
+def metadata_state(root):
+ root=Path(root);current=root/DIRECTORY/'current.json';reject_links(current)
+ try:
+  info=current.stat();fingerprint=(info.st_mtime_ns,info.st_ctime_ns,info.st_size,info.st_ino)
+ except FileNotFoundError:fingerprint=None
+ key=str(current)
+ stamp=(fingerprint,(root/DIRECTORY).exists())
+ cached=_metadata_cache.get(key)
+ if cached and cached[0]==stamp:return dict(cached[1])
+ if fingerprint is None:
+  result={'state':'corrupt','error':'存储库当前恢复资料缺失。'} if (root/DIRECTORY).exists() else {'state':'empty','error':''}
+ else:
+  try:value=load(current);result={'state':'valid','error':'','library_id':value['library']['id']}
+  except (OSError,ValueError,KeyError,TypeError) as exc:result={'state':'unknown' if '格式' in str(exc) else 'corrupt','error':str(exc)}
+ _metadata_cache[key]=(stamp,result)
+ return dict(result)

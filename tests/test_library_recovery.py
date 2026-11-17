@@ -217,3 +217,75 @@ class Recovery(unittest.TestCase):
    with patch('builtins.__import__',side_effect=missing):
     with self.assertRaises(MetadataSaveError):c.patch_work(wid,check_hours=12)
    self.assertTrue(c.library_status(lib)['pending']);self.assertEqual(tasks.load(task['id'])['output'],str(media.parent));c.close()
+
+ @unittest.skipUnless(os.name=='nt','Windows sharing publication boundary')
+ def test_library_publish_waits_for_brief_external_reader(self):
+  import threading
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);current=root/'media/.wvd-library/current.json';errors=[]
+   held=current.open('rb')
+   def write():
+    try:c.patch_work(wid,check_hours=15)
+    except BaseException as exc:errors.append(exc)
+   thread=threading.Thread(target=write);thread.start();threading.Event().wait(.05);held.close();thread.join(5)
+   self.assertFalse(thread.is_alive());self.assertEqual(errors,[]);self.assertEqual(c.work(wid)['check_hours'],15);c.close()
+
+ def test_library_load_reader_and_publication_share_io_gate(self):
+  import threading
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);current=root/'media/.wvd-library/current.json';opened=threading.Event();release=threading.Event();done=threading.Event();errors=[];original=Path.open
+   def held(path,*args,**kwargs):
+    handle=original(path,*args,**kwargs)
+    if path==current and threading.current_thread().name=='archive-reader':opened.set();release.wait(3)
+    return handle
+   def reader():
+    try:c.probe_library(root/'media')
+    except BaseException as exc:errors.append(exc)
+   def writer():
+    try:c.patch_work(wid,check_hours=17)
+    except BaseException as exc:errors.append(exc)
+    finally:done.set()
+   with patch.object(Path,'open',held):
+    first=threading.Thread(target=reader,name='archive-reader');first.start();self.assertTrue(opened.wait(3));second=threading.Thread(target=writer);second.start()
+    try:self.assertFalse(done.wait(.25))
+    finally:release.set();first.join(5);second.join(5)
+   self.assertEqual(errors,[]);self.assertTrue(done.is_set());c.close()
+
+ def test_nested_storage_roots_are_rejected_for_creation_mount_and_preview(self):
+  import shutil
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);nested=root/'media/another'
+   with self.assertRaises(ValueError):c.library(nested)
+   with self.assertRaises(ValueError):c.library(root)
+   # A genuine, independently identified existing library cannot be nested either.
+   other=c.library(root/'independent');c.remove_library(other);shutil.copytree(root/'independent',nested)
+   self.assertIn('嵌套',c.probe_library(nested)['error'])
+   with self.assertRaises(ValueError):c.mount_library(nested)
+   self.assertEqual([v['id'] for v in c.read()['libraries']],[lib]);c.close()
+
+ def test_metadata_damage_is_read_only_and_pending_retry_repairs_only_known_format(self):
+  import json
+  from media_library import MetadataSaveError
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);current=root/'media/.wvd-library/current.json';current.write_bytes(b'broken')
+   self.assertFalse(c.library_status(lib)['writable']);self.assertEqual(c.library_status(lib)['state'],'corrupt')
+   current.write_text(json.dumps({'format':99}),encoding='utf-8');self.assertEqual(c.library_status(lib)['state'],'unknown');future=current.read_bytes()
+   with self.assertRaises(ValueError):c.retry_persist(lib)
+   self.assertEqual(current.read_bytes(),future);c.close()
+
+ def test_pending_metadata_retry_can_quarantine_corruption_but_never_future_format(self):
+  import json
+  from media_library import MetadataSaveError
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);current=root/'media/.wvd-library/current.json';replace=os.replace
+   def fail(source,target):
+    if Path(target)==current:raise PermissionError('disk')
+    return replace(source,target)
+   with patch('os.replace',side_effect=fail):
+    with self.assertRaises(MetadataSaveError):c.patch_work(wid,check_hours=20)
+   bad=b'corrupt after failed publication';current.write_bytes(bad);self.assertFalse(c.library_status(lib)['writable']);self.assertTrue(c.library_status(lib)['pending']);self.assertTrue(c.retry_persist(lib));self.assertEqual(c.work(wid)['check_hours'],20);self.assertTrue(any(p.read_bytes()==bad for p in (current.parent/'quarantine').glob('*.json')))
+   with patch('os.replace',side_effect=fail):
+    with self.assertRaises(MetadataSaveError):c.patch_work(wid,check_hours=21)
+   future=json.dumps({'format':100}).encode();current.write_bytes(future)
+   with self.assertRaises(ValueError):c.retry_persist(lib)
+   self.assertEqual(current.read_bytes(),future);c.close()

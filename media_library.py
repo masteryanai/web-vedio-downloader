@@ -64,10 +64,27 @@ class Catalogue:
         return {'writable':True,'state':'ready','error':'','pending':False}
 
     def library_status(self,key):
+        from library_archive import metadata_state
         lib=next(v for v in self.read()['libraries'] if v['id']==key)
         access=self._access_library(lib)
         if not access['writable']:return access
-        return lib.get('_status',self._statuses.get(key,access))
+        stored=lib.get('_status',self._statuses.get(key,access))
+        if stored.get('state')=='needs_online_confirmation':return stored
+        try:metadata=metadata_state(lib['path'])
+        except (OSError,ValueError) as exc:metadata={'state':'corrupt','error':str(exc)}
+        if metadata.get('library_id',key)!=key:metadata={'state':'corrupt','error':'存储库资料身份与挂载记录不一致。'}
+        if metadata['state'] in ('unknown','corrupt'):
+            return {'writable':False,'state':metadata['state'],'error':metadata['error'],'pending':stored.get('pending',False)}
+        return stored
+
+    def _nested_root_error(self,root,data,exclude=None):
+        root=Path(root)
+        for lib in data['libraries']:
+            if lib['id']==exclude:continue
+            other=Path(lib['path'])
+            if root!=other and (root.is_relative_to(other) or other.is_relative_to(root)):
+                return '存储库根目录不能互相嵌套；已挂载：'+str(other)
+        return ''
 
     def _save_status(self,key,status,data):
         from library_archive import atomic
@@ -96,18 +113,26 @@ class Catalogue:
                 if self._has_related_tasks(key,root,data):raise ValueError('任务恢复模块不可用，不能丢弃续传资料。')
         return provider(key,Path(root),data) if provider else []
 
-    def persist_library(self,key,data=None):
-        from library_archive import snapshot,publish
+    def persist_library(self,key,data=None,repair=False):
+        from library_archive import snapshot,publish,publish_recovery,metadata_state
         if data is None:
             from diagnostics import file_lock
             with _gate:
-                with file_lock(self.path.parent):return self.persist_library(key,self.read())
+                with file_lock(self.path.parent):return self.persist_library(key,self.read(),repair)
         lib=next(v for v in data['libraries'] if v['id']==key)
         status=self.library_status(key)
-        if not status['writable']:raise ValueError(status['error'])
+        repair_corrupt=False
+        if not status['writable']:
+            stored=lib.get('_status',self._statuses.get(key,{}))
+            if repair and stored.get('pending') and metadata_state(lib['path'])['state']=='corrupt':
+                physical=self._access_library(lib)
+                if not physical['writable']:raise ValueError(physical['error'])
+                repair_corrupt=True
+            else:raise ValueError(status['error'])
         try:
             tasks=self._snapshot_tasks(key,lib['path'],data)
-            publish(lib['path'],snapshot(data,lib,app_data_dir(),tasks))
+            publisher=publish_recovery if repair_corrupt else publish
+            publisher(lib['path'],snapshot(data,lib,app_data_dir(),tasks))
             self._save_status(key,{'writable':True,'state':'ready','error':'','pending':False},data)
             return True
         except (OSError,ValueError) as exc:
@@ -116,7 +141,7 @@ class Catalogue:
             except OSError:self._statuses[key]=warning
             raise MetadataSaveError(warning['error']) from exc
 
-    def retry_persist(self,key):return self.persist_library(key)
+    def retry_persist(self,key):return self.persist_library(key,repair=True)
 
     @contextmanager
     def freeze_library(self,key):
@@ -140,6 +165,8 @@ class Catalogue:
         except (OSError,ValueError,KeyError):pass
         target=folder/('current.json' if recovery=='current' else 'sources.json' if recovery=='sources' else 'history/'+recovery.removeprefix('history:')+'.json')
         if recovery not in ('current','sources') and not re.fullmatch('[a-f0-9]{32}',recovery.removeprefix('history:')):raise ValueError('无效历史标识。')
+        nested=self._nested_root_error(root,self.read())
+        if nested:preview.update(error=nested,writable=False)
         if not target.exists():
             if folder.exists():preview.update(state='corrupt',error='恢复资料不存在。')
             return preview
@@ -179,6 +206,9 @@ class Catalogue:
                     for e in value['episodes']:e['id']=mapping[e['id']];e['work_id']=mapping[e['work_id']]
                     value['library']['id']=mapping[oldid]
                 libid=value['library']['id'];value['library']['path']=str(root)
+                if any(Path(v['path'])==root and v['id']!=oldid for v in before['libraries']):raise ValueError('该目录已登记为另一个存储库。')
+                nested=self._nested_root_error(root,before,oldid if mode=='relocate' else None)
+                if nested:raise ValueError(nested)
                 conflicts={w['id'] for w in before['works'] if w.get('library_id')!=libid}&{w['id'] for w in value['works']}
                 if conflicts:raise ValueError('作品身份与另一存储库冲突，请使用独立副本。')
                 oldlease=self._leases.get(libid);newlease=None;can_write=False
@@ -329,9 +359,13 @@ class Catalogue:
     def library(self,path,label=''):
         root=safe_folder(path)
         if root==Path(root.anchor):raise ValueError('请选择磁盘下的专用影片目录。')
+        nested=self._nested_root_error(root,self.read())
+        if nested:raise ValueError(nested)
         if (root/'.wvd-library').exists():return self.mount_library(root)
         root.mkdir(parents=True,exist_ok=True)
         with self.change() as data:
+            nested=self._nested_root_error(root,data)
+            if nested:raise ValueError(nested)
             old=next((v for v in data['libraries'] if os.path.normcase(v['path'])==os.path.normcase(str(root))),None)
             if old:return old['id']
             row={'id':identifier(),'path':str(root),'label':label.strip() or root.name};data['libraries'].append(row);return row['id']
