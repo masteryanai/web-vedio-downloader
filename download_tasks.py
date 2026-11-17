@@ -32,10 +32,15 @@ _io_lock = threading.RLock()
 
 
 def write_checkpoint(target, task):
+    write_checkpoint_bytes(target, json.dumps(task, ensure_ascii=False, indent=2).encode('utf-8'))
+
+
+def write_checkpoint_bytes(target, data):
+    """Publish exact saved bytes using the same Windows-safe checkpoint protocol."""
     temporary = target.with_name(target.stem + '.' + uuid.uuid4().hex + '.tmp')
     with _io_lock:
         try:
-            temporary.write_text(json.dumps(task, ensure_ascii=False, indent=2), encoding='utf-8')
+            temporary.write_bytes(data)
             delays = (.01, .02, .04, .08)
             for attempt in range(len(delays) + 1):
                 try:
@@ -173,7 +178,14 @@ def create(info, format_id, output):
 
 def work_path(task):
     task_file(task['id'])
-    output = Path(task['output']).resolve()
+    raw_output = Path(task['output']).absolute()
+    raw_cache = raw_output / ('.video-downloader-' + task['id'])
+    for part in (raw_cache,*raw_cache.parents):
+        try:info=part.lstat()
+        except FileNotFoundError:continue
+        if part.is_symlink() or getattr(info,'st_file_attributes',0)&1024:
+            raise ValueError('任务缓存路径不安全。')
+    output = raw_output.resolve()
     path = output / ('.video-downloader-' + task['id'])
     if path.is_symlink() or path.resolve().parent != output:
         raise ValueError('任务缓存路径不安全。')
