@@ -29,8 +29,11 @@ class UpdateProtocol(unittest.TestCase):
         write(self.new,'WebVideoDownloader.exe',b'new');write(self.new,'_internal/runtime.dll',b'fixed');write(self.new,'_internal/added.dat',b'added')
         self.base=protocol.tree_inventory(self.install,'0.8.0');self.target=protocol.tree_inventory(self.new,'0.9.0')
         write(self.install,protocol.INSTALLATION,protocol.canonical(self.base));self.cancel=threading.Event()
+        self.user_sentinels={name:(b'{"sentinel":true}' if name.endswith('.json') else ('private:'+name).encode()) for name in ('data/library.json','data/settings.json','data/tasks.json','data/covers/cover.jpg','.wvd-library/manifest.json','.wvd-library/history/previous.json','media/episode.mp4','media/subtitle.srt')}
+        for name,body in self.user_sentinels.items():write(self.install,name,body)
         self.env=patch.dict(os.environ,LOCALAPPDATA=str(self.root/'data'),WVD_DATA_DIR=str(self.root/'data'/'WebVideoDownloaderPrototype'));self.env.start();self.current=patch('update_package.APP_VERSION','0.8.0');self.current.start();self.pending_version=patch('update_pending.APP_VERSION','0.8.0');self.pending_version.start()
     def tearDown(self):
+        for name,body in self.user_sentinels.items():self.assertEqual((self.install/name).read_bytes(),body,name)
         self.pending_version.stop();self.current.stop();self.env.stop()
         for attempt in range(30):
             try:self.temp.cleanup();break
@@ -51,7 +54,7 @@ class UpdateProtocol(unittest.TestCase):
         self.assertTrue(protocol.verify_tree(payload,self.target)[0]);self.assertFalse((payload/'_internal/deleted.dat').exists())
         self.assertEqual((self.install/'_internal/my-notes.txt').read_bytes(),b'private')
     def test_paths_duplicates_symlinks_and_missing_members_rejected(self):
-        for name in ('../x','_internal/../x','_internal/CON.txt','_internal/x.','_internal/x:stream','downloads/video.mp4','_internal\\x'):
+        for name in ('../x','_internal/../x','_internal/CON.txt','_internal/x.','_internal/x:stream','downloads/video.mp4','_internal/data/index.json','_internal/catalogue.json','_internal/sessions.dpapi','_internal/download-tasks/job.json','_internal/.wvd-library/manifest.json','_internal/movie.mp4','_internal\\x'):
             with self.subTest(name=name),self.assertRaises(ValueError):protocol.relative(name)
         inv=json.loads(protocol.canonical(self.target));inv['files'].append(inv['files'][0]);inv['inventory_sha256']=hashlib.sha256(protocol.canonical(inv['files'])).hexdigest()
         with self.assertRaises(ValueError):protocol.validate_inventory(inv)
@@ -83,11 +86,11 @@ class UpdateProtocol(unittest.TestCase):
     def test_metadata_hash_is_checked_before_json(self):
         desc={'asset':'inventory.json','tag':'v0.9.0','sha256':'a'*64,'size':2}
         with patch('updater.request',return_value=io.BytesIO(b'{}')),self.assertRaises(ValueError):packages.fetch_json(desc)
-    def run_install(self,fail=0,launch=False):
+    def run_install(self,fail=0,launch=False,operation="upgrade"):
         stage=self.root/('stage'+str(fail));stage.mkdir();payload=stage/'payload';shutil.copytree(self.new,payload)
         for name,data in [('base',self.base),('target',self.target)]:write(stage,name+'.json',protocol.canonical(data))
         data={'schema':2,'install_dir':str(self.install),'payload_dir':str(payload),'version':'0.9.0','from_version':'0.8.0',
-            'pid':0,'operation':'upgrade','data_dir':str(self.root/'data'/'WebVideoDownloaderPrototype')}
+            'pid':0,'operation':operation,'data_dir':str(self.root/'data'/'WebVideoDownloaderPrototype')}
         for name in ('target','base'):data[name+'_inventory']=str(stage/(name+'.json'));data[name+'_sha256']=protocol.digest(stage/(name+'.json'))
         write(stage,'plan.json',protocol.canonical(data))
         result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'update_install.ps1'),'-Plan',str(stage/'plan.json'),* ([] if launch else ['-NoLaunch']),'-FailAfter',str(fail)],capture_output=True,text=True,timeout=30)
@@ -143,6 +146,21 @@ class UpdateProtocol(unittest.TestCase):
     def test_transaction_failure_restores_every_touched_file(self):
         result,report=self.run_install(fail=2);self.assertEqual(result.returncode,1);self.assertFalse(report['ok']);self.assertFalse(report['restore_error']);self.assertIn('Injected',report['error'])
         self.assertTrue(protocol.verify_tree(self.install,self.base)[0]);self.assertFalse((self.install/'_internal/added.dat').exists())
+    @unittest.skipUnless(os.name=='nt','Windows repair')
+    def test_repair_preserves_all_user_sentinels(self):
+        result,report=self.run_install(operation='repair');self.assertEqual(result.returncode,0,report)
+        self.assertTrue(protocol.verify_tree(self.install,self.target)[0])
+
+    @unittest.skipUnless(os.name=='nt','Windows repair')
+    def test_failed_repair_restores_program_and_preserves_all_user_sentinels(self):
+        result,report=self.run_install(fail=2,operation='repair');self.assertEqual(result.returncode,1,report)
+        self.assertTrue(protocol.verify_tree(self.install,self.base)[0])
+
+    @unittest.skipUnless(os.name=='nt','Windows rollback')
+    def test_failed_rollback_restores_program_and_preserves_all_user_sentinels(self):
+        result,report=self.run_install(fail=2,operation='rollback');self.assertEqual(result.returncode,1,report)
+        self.assertTrue(protocol.verify_tree(self.install,self.base)[0])
+
     @unittest.skipUnless(os.name=='nt','Windows startup rollback')
     def test_failed_target_process_restores_previous_program_and_backup_index(self):
         compiler=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'

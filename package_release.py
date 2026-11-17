@@ -13,6 +13,8 @@ def descriptor(path,tag):
 
 def package(root=None):
     production=root is None;root=Path(root or Path(__file__).resolve().parent);source=root/'dist'/'WebVideoDownloader'
+    from build_guard import check_output
+    check_output(source, packaging=True)
     if production:
         from release_history import ensure_history
         ensure_history(root,APP_VERSION)
