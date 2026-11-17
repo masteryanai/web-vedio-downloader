@@ -12,11 +12,8 @@ _NUMBERS={'created_at','finished_at','download_percent','downloaded_bytes','tota
 
 def _safe(path):
     path=Path(path).absolute()
-    for part in (path,*path.parents):
-        try:info=part.lstat()
-        except FileNotFoundError:continue
-        if part.is_symlink() or getattr(info,'st_file_attributes',0)&1024:
-            raise ValueError('任务路径不能经过符号链接或目录联接。')
+    from library_archive import reject_links
+    reject_links(path)
     return path.resolve()
 
 def _id(value):

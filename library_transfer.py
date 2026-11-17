@@ -12,11 +12,8 @@ from media_library import safe_folder as _catalogue_folder
 
 def safe_folder(path):
     path=Path(path).expanduser()
-    for part in (path,*path.parents):
-        try:info=part.lstat()
-        except FileNotFoundError:continue
-        if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&1024:
-            raise ValueError('迁移路径不能经过符号链接或目录联接。')
+    from library_archive import reject_links
+    reject_links(path)
     return _catalogue_folder(path)
 
 _JOURNAL='.wvd-transfer'
@@ -48,6 +45,27 @@ def _tree(root,cancel):
             else:raise ValueError('存储库包含不支持的特殊文件：'+str(child))
     visit(root)
     return files,directories
+
+def preview_move(store,libid,destination,cancel=lambda:False,progress=lambda data:None):
+    """Read-only stat scan; migration repeats full hash validation."""
+    source=safe_folder(next(v['path'] for v in store.read()['libraries'] if v['id']==libid))
+    dest=safe_folder(Path(destination).absolute())
+    if source==dest or source.is_relative_to(dest) or dest.is_relative_to(source):
+        raise ValueError('源库与目标目录不能相同或互相嵌套。')
+    result={'source':str(source),'destination':str(dest),'total_files':0,'total_bytes':0,
+            'scope':'源库目录内全部文件（视频、字幕、附带文件、任务缓存与恢复资料）'}
+    def visit(folder):
+        _check(cancel)
+        for child in folder.iterdir():
+            _check(cancel);safe_folder(child);info=child.stat()
+            if stat.S_ISDIR(info.st_mode):visit(child)
+            elif stat.S_ISREG(info.st_mode):
+                result['total_files']+=1;result['total_bytes']+=info.st_size
+                progress(dict(result,phase='scan',path=str(child)))
+            else:raise ValueError('存储库包含不支持的特殊文件：'+str(child))
+    visit(source)
+    _check(cancel)
+    return result
 
 def _inactive(store,libid):
     data=store.read();works={w['id'] for w in data['works'] if w.get('library_id')==libid}

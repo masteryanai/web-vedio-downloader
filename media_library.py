@@ -70,6 +70,8 @@ class Catalogue:
         if not access['writable']:return access
         stored=lib.get('_status',self._statuses.get(key,access))
         if stored.get('state')=='needs_online_confirmation':return stored
+        if lib.get('_tasks_pending_restore'):
+            return {'writable':False,'state':'needs_task_restore','error':'请使用重试保存 / 来源恢复，恢复待继续任务后再修改存储库。','pending':True}
         try:metadata=metadata_state(lib['path'])
         except (OSError,ValueError) as exc:metadata={'state':'corrupt','error':str(exc)}
         if metadata.get('library_id',key)!=key:metadata={'state':'corrupt','error':'存储库资料身份与挂载记录不一致。'}
@@ -141,7 +143,14 @@ class Catalogue:
             except OSError:self._statuses[key]=warning
             raise MetadataSaveError(warning['error']) from exc
 
-    def retry_persist(self,key):return self.persist_library(key,repair=True)
+    def retry_persist(self,key):
+        lib=next(v for v in self.read()['libraries'] if v['id']==key)
+        if lib.get('_tasks_pending_restore'):
+            access=self._access_library(lib)
+            if not access['writable']:raise ValueError(access['error'])
+            # Reuse the archive/index/checkpoint transaction. No queue is started.
+            self.mount_library(lib['path'])
+        return self.persist_library(key,repair=True)
 
     @contextmanager
     def freeze_library(self,key):
@@ -250,6 +259,9 @@ class Catalogue:
                             if e['task_id']:e['status']='已暂停'
                             elif e.get('status') in ('排队中','处理中'):e['status']='待继续'
                         data=copy.deepcopy(before)
+                        if not can_write and rows and recovery=='current':
+                            value['library']['_tasks_pending_restore']=True
+                        else:value['library'].pop('_tasks_pending_restore',None)
                         if recovery=='sources':value['library']['_status']={'writable':False,'state':'needs_online_confirmation','error':'请重新解析来源并确认匹配。','pending':False}
                         data['libraries']=[v for v in data['libraries'] if v['id']!=libid]+[value['library']]
                         previous={w['id'] for w in data['works'] if w.get('library_id')==libid}

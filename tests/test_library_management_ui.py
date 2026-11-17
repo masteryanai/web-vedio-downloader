@@ -66,8 +66,18 @@ def check():
                     assert ws.store.work(wid)['no_play_prompt'] and ws.store.work(wid)['check_enabled']
                     assert not window.queue.active and not window.queue.waiting
                     destination=root/'destination';destination.mkdir()
-                    with patch.object(QFileDialog,'getExistingDirectory',return_value=str(destination)):
+                    original_confirm=manager.confirm_move
+                    previews=[]
+                    def confirm(key,target,preview):
+                        previews.append(preview)
+                        assert preview['source']==str(source)
+                        assert preview['destination']==str(destination)
+                        assert preview['total_files']==len([p for p in source.rglob('*') if p.is_file()])
+                        assert preview['total_bytes']==sum(p.stat().st_size for p in source.rglob('*') if p.is_file())
+                        original_confirm(key,target,preview)
+                    with patch.object(manager,'confirm_move',side_effect=confirm),patch.object(QFileDialog,'getExistingDirectory',return_value=str(destination)):
                         manager.move();wait(lambda:not manager.busy)
+                    assert previews
                     assert Path(ws.store.read()['libraries'][0]['path'])==destination
                     assert (destination/'episodes/one.mp4').read_bytes()==b'existing media sentinel'
                     assert (destination/'episodes'/cache.name/'source.part').read_bytes()==b'keep partial bytes'
