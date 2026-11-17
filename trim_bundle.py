@@ -5,15 +5,15 @@ import hashlib
 from pathlib import Path
 
 
-def trim() -> None:
+def trim(bundle=None) -> None:
     root = Path(__file__).resolve().parent
-    release = (root / "dist" / "WebVideoDownloader").resolve()
-    expected_parent = (root / "dist").resolve()
-    if release.parent != expected_parent or not release.is_dir():
-        raise RuntimeError("未找到项目内的构建目录。")
-    internal = (release / "_internal").resolve()
-    if not internal.is_relative_to(release):
-        raise RuntimeError("构建目录验证失败。")
+    release = Path(bundle) if bundle is not None else root / 'build' / 'release-output' / 'WebVideoDownloader'
+    from build_guard import check_output
+    check_output(release)
+    if not release.is_dir():
+        raise RuntimeError("未找到构建目录。")
+    release = release.absolute()
+    internal = release / "_internal"
     removed = 0
 
     def remove(file: Path) -> None:
@@ -42,4 +42,6 @@ def trim() -> None:
 
 
 if __name__ == "__main__":
-    trim()
+    import argparse
+    parser=argparse.ArgumentParser();parser.add_argument("bundle",nargs="?",type=Path)
+    trim(parser.parse_args().bundle)
