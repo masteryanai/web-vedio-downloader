@@ -138,3 +138,17 @@ class Recovery(unittest.TestCase):
    shutil.copytree(root/'media',root/'clone');clib=c.mount_library(root/'clone',mode='clone');cw=next(w for w in c.read()['works'] if w['library_id']==clib);ep=next(e for e in c.read()['episodes'] if e['work_id']==cw['id']);ctask=ep['task_id']
    self.assertNotEqual(ctask,task['id']);self.assertEqual(tasks.work_path(tasks.load(ctask)).joinpath('source.part').read_bytes(),b'partial')
    c.remove_library(clib);c.mount_library(root/'clone');ep=c.episode(ep['id']);self.assertEqual(ep['task_id'],ctask);self.assertEqual(tasks.work_path(tasks.load(ctask)).joinpath('source.part').read_bytes(),b'partial');self.assertEqual(tasks.load(task['id'])['output'],str(media.parent));c.close()
+
+ def test_confirmed_central_index_rebuild_preserves_original_then_mount_restores(self):
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root);c.patch_work(wid,no_play_prompt=True);c.close();bad=b'{broken central index';c.path.write_bytes(bad)
+   with self.assertRaises(ValueError):c.read()
+   saved=c.rebuild_index();self.assertEqual(Path(saved).read_bytes(),bad);self.assertEqual(c.read()['works'],[])
+   c.mount_library(root/'media');self.assertEqual(c.work(wid)['id'],wid);self.assertTrue(c.work(wid)['no_play_prompt']);self.assertEqual(Path(c.episode(eids[0])['files'][0]['path']).read_bytes(),b'original');c.close()
+
+ def test_rebuild_index_never_replaces_future_schema(self):
+  import json
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   c=Catalogue();c.path.parent.mkdir(parents=True);future=json.dumps({'schema':3,'libraries':[],'works':[],'episodes':[]}).encode();c.path.write_bytes(future)
+   with self.assertRaises(ValueError):c.rebuild_index()
+   self.assertEqual(c.path.read_bytes(),future);self.assertEqual(list((c.path.parent/'quarantine').glob('*')),[]);c.close()

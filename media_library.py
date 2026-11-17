@@ -214,6 +214,34 @@ class Catalogue:
             if data.get('schema') not in (1,2) or any(not isinstance(data.get(k),list) for k in ('libraries','works','episodes')):raise ValueError('影片库索引损坏，原文件已保留，请查看故障记录。')
             return data
 
+    def rebuild_index(self):
+        """Explicit user-confirmed rebuild; caller must first stop related tasks.
+
+        Only the central, reconstructible index is replaced. Returns the preserved
+        original path, or None when no index existed. Library records stay intact.
+        """
+        from diagnostics import file_lock
+        from library_archive import atomic
+        with _gate:
+            self.path.parent.mkdir(parents=True,exist_ok=True)
+            with file_lock(self.path.parent):
+                saved=None
+                if self.path.exists():
+                    raw=self.path.read_bytes()
+                    try:previous=json.loads(raw)
+                    except (ValueError,UnicodeError):previous=None
+                    schema=previous.get('schema') if isinstance(previous,dict) else None
+                    if type(schema) in (int,float) and schema>2:raise ValueError('无法识别的新版本影片库索引；原文件保留，不能重建覆盖。')
+                    folder=self.path.parent/'quarantine';folder.mkdir(exist_ok=True)
+                    saved=folder/('catalogue-'+identifier()+'.json')
+                    self.path.replace(saved)
+                try:atomic(self.path,{'schema':2,'libraries':[],'works':[],'episodes':[]})
+                except BaseException:
+                    if saved is not None and not self.path.exists():saved.replace(self.path)
+                    raise
+                self.close();self._statuses.clear()
+                return saved
+
     @contextmanager
     def change(self,persist=True):
         from diagnostics import file_lock
