@@ -171,7 +171,11 @@ def publish(root,payload):
  if previous==payload:return
  if previous is not None:atomic(folder/'history'/(uuid.uuid4().hex+'.json'),encode(previous))
  atomic(current,encode(payload))
- histories=sorted((folder/'history').glob('*.json'),key=lambda p:p.stat().st_mtime_ns,reverse=True)
+ histories=[]
+ for old in sorted((folder/'history').glob('*.json'),key=lambda p:p.stat().st_mtime_ns,reverse=True):
+  try:
+   if load(old)['library']['id']==payload['library']['id']:histories.append(old)
+  except (OSError,ValueError,KeyError,TypeError):pass # Preserve invalid originals without evicting valid history.
  for old in histories[3:]:sharing_retry(old.unlink)
 
 def materialize(root,payload):

@@ -4,6 +4,15 @@ from unittest.mock import patch
 from media_library import Catalogue
 
 class Recovery(unittest.TestCase):
+ def test_corrupt_history_does_not_evict_one_of_three_valid_recovery_records(self):
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root)
+   for hours in (3,4,5,6):c.patch_work(wid,check_hours=hours)
+   folder=root/'media/.wvd-library/history';newest=max(folder.glob('*.json'),key=lambda p:p.stat().st_mtime_ns);newest.write_bytes(b'preserve corrupt original')
+   c.patch_work(wid,check_hours=7)
+   self.assertEqual(len(c.probe_library(root/'media')['histories']),3)
+   self.assertEqual(newest.read_bytes(),b'preserve corrupt original');c.close()
+
  def test_index_loss_and_moved_library_restore_identity_settings_media(self):
   with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
    root=Path(tmp);c=Catalogue();lib=c.library(str(root/'media'))
