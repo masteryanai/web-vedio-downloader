@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QWidget,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QP
 from media_library import Catalogue,component,source_key,choose_format
 import download_tasks as tasks
 import diagnostics
+from motion import FeedbackButton
 
 
 class Work(QObject):
@@ -549,7 +550,7 @@ class Workspace(QObject):
         window.task_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose,False);window.task_dialog.setWindowFlags(Qt.WindowType.Widget)
         task_page=QWidget();tasks_layout=QVBoxLayout(task_page);tasks_layout.setContentsMargins(20,12,20,12);window.total_speed_label.setObjectName('sectionTitle');tasks_layout.addWidget(window.total_speed_label)
         self.trend=Trend();self.trend.setMinimumHeight(160);self.trend.setMaximumHeight(180);tasks_layout.addWidget(self.trend);tasks_layout.addWidget(window.task_dialog,1);self.pages.addWidget(task_page)
-        footer=QHBoxLayout();footer.setContentsMargins(12,3,12,3);add=QPushButton('添加影片');add.setIcon(control_icon('add'));add.setIconSize(QSize(20,20));add.setMinimumHeight(32);add.setAccessibleName('添加影片');add.setObjectName('sideButton');add.clicked.connect(self.open_add);footer.addWidget(add);footer.addStretch();self.status=QPushButton('暂无任务');self.status.setObjectName('sideButton');self.status.clicked.connect(self.show_tasks);footer.addWidget(self.status);footer.addStretch()
+        footer=QHBoxLayout();footer.setContentsMargins(12,3,12,3);add=FeedbackButton('添加影片');add.setIcon(control_icon('add'));add.setIconSize(QSize(20,20));add.setMinimumHeight(32);add.setAccessibleName('添加影片');add.setObjectName('sideButton');add.clicked.connect(self.open_add);footer.addWidget(add);footer.addStretch();self.status=QPushButton('暂无任务');self.status.setObjectName('sideButton');self.status.clicked.connect(self.show_tasks);footer.addWidget(self.status);footer.addStretch()
         floating=QPushButton('悬浮框');floating.clicked.connect(lambda:window.desktop.set_float_enabled(not window.desktop.cfg['float_enabled']));footer.addWidget(floating);outer.addLayout(footer)
         window.setCentralWidget(shell);old_shell.deleteLater()
         area=window.screen().availableGeometry();width=max(750,area.width()-40);height=max(480,area.height()-60)

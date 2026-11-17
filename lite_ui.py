@@ -9,6 +9,7 @@ from library_ui import Jobs,Trend
 from media_library import component
 from add_flow import AddFlow
 from steam_widgets import control_icon
+from motion import FeedbackButton
 
 class DownloadSelection(QFrame):
     def __init__(self,workspace):
@@ -83,7 +84,7 @@ class Workspace:
         window.download_button.setText('加入下载队列');window.output_path.setText(preferences.load()['last_download_dir'] or str(__import__('runtime').default_download_dir()))
         shell=QWidget();box=QVBoxLayout(shell);box.setContentsMargins(20,16,20,12);box.setSpacing(14)
         head=QHBoxLayout();title=QLabel('下载任务');title.setObjectName('title');head.addWidget(title);head.addStretch()
-        add=QPushButton('添加下载');add.setIcon(control_icon('add'));add.setIconSize(QSize(20,20));add.setObjectName('primary');add.clicked.connect(self.open_add);head.addWidget(add)
+        add=FeedbackButton('添加下载');add.setIcon(control_icon('add'));add.setIconSize(QSize(20,20));add.setObjectName('primary');add.clicked.connect(self.open_add);head.addWidget(add)
         for label,callback in [('账号',window.show_accounts),('设置',window.show_settings),('更新',window.check_updates),('故障反馈',window.show_diagnostics)]:
             button=QPushButton(label);button.clicked.connect(callback);head.addWidget(button)
         box.addLayout(head);self.trend=Trend();self.trend.setMinimumHeight(110);self.trend.setMaximumHeight(140);box.addWidget(self.trend)

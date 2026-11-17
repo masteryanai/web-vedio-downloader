@@ -48,8 +48,11 @@ class SettingsDialog(QDialog):
         self.limit_enabled=QCheckBox('限制媒体下载总速度（所有任务共享）');self.limit_enabled.setChecked(cfg['download_limit_mib']>0);layout.addWidget(self.limit_enabled)
         self.speed_limit=QDoubleSpinBox();self.speed_limit.setDecimals(2);self.speed_limit.setRange(.01,102400);self.speed_limit.setSingleStep(.5);self.speed_limit.setSuffix(' MiB/s');self.speed_limit.setValue(cfg['download_limit_mib'] or 5);self.speed_limit.setEnabled(self.limit_enabled.isChecked());self.limit_enabled.toggled.connect(self.speed_limit.setEnabled);layout.addWidget(self.speed_limit)
         rate_note=QLabel('默认不限速。仅限制视频、图片和配乐；保存后立即生效，软件更新不受限。');rate_note.setWordWrap(True);layout.addWidget(rate_note)
+        self.clipboard=QCheckBox('前台激活时识别剪贴板中的视频链接');self.clipboard.setChecked(cfg['clipboard_enabled']);layout.addWidget(self.clipboard)
+        clear_clipboard=QPushButton('清除剪贴板链接识别记录');clear_clipboard.clicked.connect(self.clear_clipboard_history);layout.addWidget(clear_clipboard)
         layout.addStretch()
         layout=self.sections.page('界面与悬浮框')
+        self.reduce_motion=QCheckBox('减少界面动画');self.reduce_motion.setChecked(cfg['reduce_motion']);layout.addWidget(self.reduce_motion)
         layout.addWidget(QLabel('点击主窗口关闭按钮时'))
         self.close_action=QComboBox()
         for text,key in (('每次询问','ask'),('隐藏到托盘','hide'),('退出程序','exit')):self.close_action.addItem(text,key)
@@ -67,7 +70,7 @@ class SettingsDialog(QDialog):
         from runtime import app_data_dir
         data_label=QLabel('便携数据目录：'+str(app_data_dir()));data_label.setWordWrap(True);layout.addWidget(data_label)
         cache_button=QPushButton('更新缓存：目录与清理');cache_button.clicked.connect(self.show_cache);layout.addWidget(cache_button)
-        if hasattr(desktop.window,'workspace'):
+        if hasattr(getattr(desktop.window,'workspace',None),'storage'):
             library_button=QPushButton('影片存储库与外部播放器');library_button.clicked.connect(desktop.window.workspace.storage);layout.addWidget(library_button)
         layout.addStretch()
         self.error=QLabel();self.error.setWordWrap(True);outer.addWidget(self.error)
@@ -84,9 +87,15 @@ class SettingsDialog(QDialog):
     def apply(self):
         try:
             self.desktop.save(parallel_downloads=self.count.value(),close_action=self.close_action.currentData(),
+                clipboard_enabled=self.clipboard.isChecked(),reduce_motion=self.reduce_motion.isChecked(),
                 float_enabled=self.enabled.isChecked(),float_auto_hide=self.auto_hide.isChecked(),float_opacity=self.opacity.value(),auto_check_updates=self.auto_check.isChecked(),update_interval_hours=self.check_interval.value(),download_limit_mib=self.speed_limit.value() if self.limit_enabled.isChecked() else 0)
             self.accept()
         except Exception as error:self.error.setText('设置未保存：'+diagnostics.redact(str(error)))
+
+    def clear_clipboard_history(self):
+        if QMessageBox.question(self,'清除识别记录','只清除已处理链接的指纹，之后这些链接可再次自动提示；不会删除下载任务或影片。')==QMessageBox.StandardButton.Yes:
+            from clipboard_links import SeenLinks
+            SeenLinks().clear()
 
 
 class FloatingPanel(QFrame):

@@ -10,7 +10,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import zipfile
-from runtime import APP_VERSION, app_data_dir, resource_path, PRODUCT_ID, EXECUTABLE, UPDATE_MANIFEST
+from runtime import APP_VERSION, app_data_dir, resource_path, PRODUCT_ID, EXECUTABLE, UPDATE_MANIFEST,package_name
 
 REPO = 'masteryanai/web-vedio-downloader'
 API = f'https://api.github.com/repos/{REPO}/releases/latest'
@@ -70,7 +70,7 @@ def validate_manifest(manifest, tag):
         raise RuntimeError('更新包缺少有效校验信息。')
     if type(manifest.get('size')) is not int or manifest['size']<=0:
         raise RuntimeError('更新包大小信息无效。')
-    if manifest.get('asset') != f'{PRODUCT_ID}-v{tag.lstrip("v")}-windows-x64.zip':
+    if manifest.get('asset') != package_name(tag.lstrip('v')):
         raise RuntimeError('更新包名称不正确。')
 
 

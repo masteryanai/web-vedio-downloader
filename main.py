@@ -548,7 +548,20 @@ def gui(args: argparse.Namespace) -> int:
             text = self.url_input.toPlainText().strip()
             if not text:
                 return
+            if hasattr(self,'workspace'):
+                flow=self.workspace.add_flow
+                if not getattr(flow,'driving_parse',False):
+                    from clipboard_links import extract
+                    links=extract(text)
+                    if len(links)>1:
+                        from clipboard_watch import choose_links
+                        selected=choose_links(links,self.workspace.add_dialog)
+                        if selected:flow.start_urls(selected)
+                        return
+                    flow.sources=[];flow.current_source=None;flow.active_source=None;self._automatic_clipboard=False
             site = site_for_url(text)
+            if site=='抖音' and getattr(self,'_automatic_clipboard',False):
+                self.workspace.add_flow.parse_failed('抖音需要官方页面解析，请点击“前往验证”后继续。',needs_validation=True);return
             cookies = self.accounts.cookies_for(site) if site in SITES else []
             self.info = None
             self.quality.clear()
@@ -561,6 +574,9 @@ def gui(args: argparse.Namespace) -> int:
             self.detail.setText("部分网站可能需要先登录账号或完成访问验证。")
             self.append_log(f"开始解析：{site}")
             if site == "抖音":
+                from component_ui import ensure_browser
+                if not ensure_browser(self):
+                    self.task_failure('浏览器组件尚未就绪，请重试或使用离线完整包。');return
                 from engine import _extract_url
                 from douyin_browser import DouyinCapture
                 self.task_kind = "inspect"
@@ -613,9 +629,7 @@ def gui(args: argparse.Namespace) -> int:
             if not self.info or self.is_busy(): return
             if hasattr(self,'workspace') and self.workspace.add_dialog.isVisible() and not self.resume_task_id:
                 try:
-                    count=self.workspace.add_controls.submit()
-                    if count is not None:
-                        self.append_log(f'正在准备 {count} 项任务。' if self.workspace.batch_preparing else f'已排队 {count} 项。');self.workspace.add_flow.submitted(count)
+                    self.workspace.add_flow.submit_requested()
                 except Exception as error:QMessageBox.warning(self,'未能加入库',str(error))
                 return
             info=self.info; selected=self.quality.currentData();folder=self.output_path.text()
@@ -721,6 +735,7 @@ def gui(args: argparse.Namespace) -> int:
 
         @Slot(str)
         def task_failure(self, message):
+            if hasattr(self,'workspace'):self.workspace.add_flow.parse_failed(message)
             self.progress_bar.setRange(0,100);self.progress_bar.setValue(0)
             self.status_text.setText('解析已取消' if self.cancel_event.is_set() else '本次解析未完成')
             self.detail.setText(message[:450]);self.append_log(message)
@@ -823,7 +838,8 @@ def gui(args: argparse.Namespace) -> int:
     from portable_ui import prepare_data
     if not prepare_data():instance.close();return 1
     app.setQuitOnLastWindowClosed(False)
-    app.setApplicationName("WebVideoDownloader")
+    from runtime import PRODUCT_ID
+    app.setApplicationName(PRODUCT_ID)
     app.setOrganizationName("LocalTools")
     app.setFont(QFont("Microsoft YaHei UI", 10))
     from steam_theme import STYLE as steam_style
@@ -841,6 +857,9 @@ def gui(args: argparse.Namespace) -> int:
         window.url_input.setPlainText(args.url)
     window.refresh_buttons()
     window.show()
+    if not args.smoke_ui and not getattr(args,'smoke_inspect',False) and os.environ.get('QT_QPA_PLATFORM')!='offscreen':
+        from clipboard_watch import ClipboardWatcher
+        window.clipboard_watcher=ClipboardWatcher(window)
     if getattr(args,'update_plan',None):
         from install_handoff import acknowledge
         def confirm_startup():
