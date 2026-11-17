@@ -102,8 +102,12 @@ def activate_browser():
     if not verify(root,value):raise ComponentRequired('需要浏览器组件，请在账号或解析窗口点击前往验证后安装。')
     import PySide6
     path=root/'PySide6';PySide6.__path__.append(str(path))
-    if os.name=='nt':_handles.append(os.add_dll_directory(str(path)))
-    os.environ['PATH']=os.pathsep.join((str(resource_path('PySide6')),str(resource_path()),os.environ.get('PATH','')))
+    if os.name=='nt':
+        # An extension in the add-on directory also needs the retained Qt DLLs
+        # (for example Qt6PrintSupport) in the base package. Python's Windows
+        # extension loader does not resolve those dependencies through PATH.
+        for directory in (path,resource_path('PySide6'),resource_path()):_handles.append(os.add_dll_directory(str(directory)))
+    os.environ['PATH']=os.pathsep.join((str(path),str(resource_path('PySide6')),str(resource_path()),os.environ.get('PATH','')))
     os.environ['QTWEBENGINEPROCESS_PATH']=str(path/'QtWebEngineProcess.exe')
     os.environ['QTWEBENGINE_RESOURCES_PATH']=str(path/'resources')
     os.environ['QTWEBENGINE_LOCALES_PATH']=str(path/'translations'/'qtwebengine_locales')

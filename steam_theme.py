@@ -18,7 +18,7 @@ QPushButton#primary {background:#0878c0;color:white;border-color:#0878c0;font-we
 QPushButton#nav {background:transparent;border:0;font-size:21px;font-weight:600;}
 QPushButton#sideButton {text-align:left;background:transparent;border:0;color:#b8bcbf;}
 QPushButton:disabled {color:#9aa9b7;background:#25303b;border-color:#3a4652;}
-QLineEdit,QPlainTextEdit,QTextEdit,QTextBrowser,QComboBox,QSpinBox,QDoubleSpinBox {background:#202329;color:#c2d7e9;border:1px solid #3d434d;border-radius:3px;padding:6px;selection-background-color:#3e5068;}
+QLineEdit,QPlainTextEdit,QTextEdit,QTextBrowser,QComboBox,QSpinBox,QDoubleSpinBox {background:#202329;color:#c2d7e9;placeholder-text-color:#a6b7c7;border:1px solid #3d434d;border-radius:3px;padding:6px;selection-background-color:#3e5068;}
 QComboBox QAbstractItemView {background:#1c2e3e;color:#d1e4f4;selection-background-color:#345772;}
 QTableWidget,QListWidget,QScrollArea {background:#202329;color:#bfd3e4;border:0;alternate-background-color:#292e36;gridline-color:#34485b;}
 QTableWidget::item:selected,QListWidget::item:selected {background:#3e5068;color:#effaff;}
