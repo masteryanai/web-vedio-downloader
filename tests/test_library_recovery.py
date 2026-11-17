@@ -128,3 +128,13 @@ class Recovery(unittest.TestCase):
    future=json.dumps({'format':99}).encode();current.write_bytes(future);c.mount_library(root/'media',recovery='sources')
    with self.assertRaises(ValueError):c.confirm_source_restore(lib)
    self.assertEqual(current.read_bytes(),future);c.close()
+
+ def test_clone_task_archive_can_be_detached_and_restored_again(self):
+  import shutil,download_tasks as tasks
+  with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,WVD_DATA_DIR=str(Path(tmp)/'data')):
+   root=Path(tmp);c,lib,wid,eids,media=self.fixture(root)
+   task=tasks.create({'url':'https://example.org/episode/1','site':'demo','title':'one'},'hd',media.parent);task['library_episode']=eids[0];tasks.save(task)
+   cache=tasks.work_path(task);cache.mkdir(parents=True);(cache/'source.part').write_bytes(b'partial');c.bind(eids[0],task['id'])
+   shutil.copytree(root/'media',root/'clone');clib=c.mount_library(root/'clone',mode='clone');cw=next(w for w in c.read()['works'] if w['library_id']==clib);ep=next(e for e in c.read()['episodes'] if e['work_id']==cw['id']);ctask=ep['task_id']
+   self.assertNotEqual(ctask,task['id']);self.assertEqual(tasks.work_path(tasks.load(ctask)).joinpath('source.part').read_bytes(),b'partial')
+   c.remove_library(clib);c.mount_library(root/'clone');ep=c.episode(ep['id']);self.assertEqual(ep['task_id'],ctask);self.assertEqual(tasks.work_path(tasks.load(ctask)).joinpath('source.part').read_bytes(),b'partial');self.assertEqual(tasks.load(task['id'])['output'],str(media.parent));c.close()

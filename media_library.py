@@ -178,7 +178,14 @@ class Catalogue:
             # Explicit history recovery may replace a damaged current record.
             from library_archive import snapshot,publish_recovery
             if not self.library_status(libid)['writable']:raise ValueError('存储库不可写。')
-            payload=snapshot(self.read(),value['library'],app_data_dir(),value.get('tasks',[]))
+            context=self.read();provider=self.task_snapshot_provider
+            if provider is None:
+                try:
+                    from library_tasks import snapshot_tasks
+                    provider=snapshot_tasks
+                except ImportError:pass
+            task_rows=provider(libid,root,context) if provider else value.get('tasks',[])
+            payload=snapshot(context,value['library'],app_data_dir(),task_rows)
             publish_recovery(root,payload)
         return libid
 
