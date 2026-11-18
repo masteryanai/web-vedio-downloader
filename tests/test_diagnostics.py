@@ -20,6 +20,25 @@ class Diagnostics(unittest.TestCase):
             time.sleep(.02)
         self.fail('diagnostic feedback did not arrive')
 
+    def test_atomic_json_retries_transient_reader_lock_and_bounds_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target=Path(folder)/'heartbeat.json'
+            original=Path.replace
+            attempts=[]
+            def locked(path,dest):
+                attempts.append(path)
+                if len(attempts)<3:raise PermissionError('reader holds target')
+                return original(path,dest)
+            with patch.object(Path,'replace',locked),patch('diagnostics.time.sleep'):
+                d.atomic_json(target,{'sequence':7})
+            self.assertEqual(json.loads(target.read_text()),{'sequence':7})
+            self.assertEqual(len(attempts),3)
+            with patch.object(Path,'replace',side_effect=PermissionError('persistent lock')) as replace,patch('diagnostics.time.sleep'):
+                with self.assertRaises(PermissionError):d.atomic_json(target,{'sequence':8})
+            self.assertEqual(replace.call_count,4)
+            self.assertEqual(json.loads(target.read_text()),{'sequence':7})
+            self.assertFalse(list(Path(folder).glob('*.tmp')))
+
     def test_redaction_before_persistence_and_export_whitelist(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)/'diagnostics';root.mkdir()

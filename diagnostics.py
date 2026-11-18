@@ -48,7 +48,15 @@ def atomic_json(path,data):
     temporary=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
     try:
         temporary.write_text(json.dumps(data,ensure_ascii=False),encoding='utf-8')
-        temporary.replace(path)
+        # A Windows reader can briefly deny deletion while holding the old file.
+        # Retry only that transient permission failure; never discard the old state.
+        for attempt in range(4):
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError:
+                if attempt==3:raise
+                time.sleep(.005*(2**attempt))
     finally:temporary.unlink(missing_ok=True)
 
 
