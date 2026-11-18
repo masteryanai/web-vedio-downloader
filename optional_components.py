@@ -36,7 +36,7 @@ def safe_relative(name):
     return PurePosixPath(name)
 
 def folder(value):
-    return program_dir()/'components'/'browser'/(APP_VERSION+'-'+value['sha256'][:16])
+    return program_dir()/'components'/'browser'/('sha256-'+value['sha256'][:24])
 
 def verify(root,value,cancel=None,progress=lambda _:None):
     from library_archive import reject_links

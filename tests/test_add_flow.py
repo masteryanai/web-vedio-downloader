@@ -7,7 +7,7 @@ class AddFlowUI(unittest.TestCase):
     def run_product(self,product):
         with tempfile.TemporaryDirectory() as folder:
             env=dict(os.environ,WVD_DATA_DIR=str(Path(folder)/'data'),WVD_PRODUCT=product,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1')
-            result=subprocess.run([sys.executable,'-X','utf8',__file__,'--check',product],env=env,capture_output=True,text=True,timeout=45)
+            result=subprocess.run([sys.executable,'-X','utf8',__file__,'--check',product],env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
             diagnostics=Path(folder)/'data/diagnostics/runtime.log'
             evidence=diagnostics.read_text(encoding='utf-8',errors='replace')[-12000:] if result.returncode and diagnostics.exists() else ''
             self.assertEqual(result.returncode,0,result.stdout+result.stderr+evidence)

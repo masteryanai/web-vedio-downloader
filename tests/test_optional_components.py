@@ -4,6 +4,14 @@ from unittest.mock import patch
 import optional_components as components
 
 class OptionalComponents(unittest.TestCase):
+    def test_unchanged_runtime_is_reused_across_application_versions(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);archive,value=self.fixture(root)
+            with patch('optional_components.program_dir',return_value=root):
+                installed=components.install_from_archive(archive,value,threading.Event())
+                with patch('optional_components.APP_VERSION','99.0.0'):
+                    self.assertEqual(components.install_from_archive(archive,value,threading.Event()),installed)
+                self.assertEqual(len(list((root/'components/browser').iterdir())),1)
     def test_cancel_installed_component_hashing_preserves_files(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);file=root/'PySide6/Qt6WebEngineCore.dll';file.parent.mkdir();body=b'x'*(3*1024*1024);file.write_bytes(body)

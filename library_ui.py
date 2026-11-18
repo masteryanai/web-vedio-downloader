@@ -18,28 +18,26 @@ import diagnostics
 from motion import FeedbackButton
 
 
-class Work(QObject):
-    result=Signal(str,object);failed=Signal(str,str);finished=Signal()
-    def __init__(self,action,cancel,key):super().__init__();self.action=action;self.cancel=cancel;self.key=key
-    @Slot()
-    def run(self):
-        try:self.result.emit(self.key,self.action(self.cancel))
-        except Exception as error:
-            diagnostics.exception('library.worker.failed',error,error.__traceback__);self.failed.emit(self.key,str(error))
-        finally:self.finished.emit()
-
-
 class Jobs(QObject):
-    def __init__(self,parent):super().__init__(parent);self.running={};self.callbacks={};self.closing=False
+    result=Signal(str,object);failure=Signal(str,str);finished=Signal(str)
+    def __init__(self,parent):
+        super().__init__(parent);self.running={};self.callbacks={};self.closing=False
+        self.result.connect(self.received,Qt.ConnectionType.QueuedConnection);self.failure.connect(self.failed,Qt.ConnectionType.QueuedConnection);self.finished.connect(self.reaped,Qt.ConnectionType.QueuedConnection)
     def start(self,action,done,failed):
         if self.closing:return
         from media_library import identifier
         key=identifier();self.callbacks[key]=(done,failed)
-        cancel=threading.Event();thread=QThread(self);job=Work(action,cancel,key);job.moveToThread(thread)
-        self.running[thread]=(job,cancel)
-        thread.started.connect(job.run);job.result.connect(self.received,Qt.ConnectionType.QueuedConnection);job.failed.connect(self.failed,Qt.ConnectionType.QueuedConnection)
-        job.finished.connect(thread.quit);job.finished.connect(job.deleteLater)
-        thread.finished.connect(self.reaped);thread.finished.connect(thread.deleteLater);thread.start()
+        cancel=threading.Event()
+        def run():
+            try:self.result.emit(key,action(cancel))
+            except Exception as error:
+                diagnostics.exception('library.worker.failed',error,error.__traceback__);self.failure.emit(key,str(error))
+            finally:self.finished.emit(key)
+        # These jobs perform Python I/O and QImage decoding, not Qt event-loop
+        # work. Keep one permanent GUI-owned signal bridge; avoid moving and
+        # deleting a QObject/QThread pair for every short-lived operation.
+        thread=threading.Thread(target=run,name='library-job-'+key[:8])
+        self.running[key]=(thread,cancel);thread.start()
         return cancel
     @Slot(str,object)
     def received(self,key,value):
@@ -52,13 +50,12 @@ class Jobs(QObject):
     def failed(self,key,error):
         callbacks=self.callbacks.pop(key,None)
         if callbacks and not self.closing:callbacks[1](error)
-    @Slot()
-    def reaped(self):
-        thread=self.sender()
-        # finished may precede native/TLS cleanup. Publish idle only after join,
-        # so shutdown cannot tear Qt down while the worker is still unwinding.
-        thread.wait()
-        self.running.pop(thread,None)
+    @Slot(str)
+    def reaped(self,key):
+        entry=self.running.get(key)
+        if entry:
+            entry[0].join()
+            self.running.pop(key,None)
     def shutdown(self):
         self.closing=True
         for _,cancel in self.running.values():cancel.set()
