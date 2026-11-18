@@ -831,6 +831,7 @@ def gui(args: argparse.Namespace) -> int:
             self.desktop.shutdown();event.accept()
             QTimer.singleShot(0,QApplication.instance().quit)
 
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv[:1])
     app.setQuitOnLastWindowClosed(False)
     from single_instance import SingleInstance
@@ -852,6 +853,9 @@ def gui(args: argparse.Namespace) -> int:
     from gui_gc import GuiCollector
     collector=GuiCollector(app)
     recorder=diagnostics.start()
+    if getattr(args,'smoke_browser',False):
+        from PySide6.QtCore import qInstallMessageHandler
+        qInstallMessageHandler(lambda kind,context,message:diagnostics.event('smoke.qt',message))
     heartbeat=QTimer(app);heartbeat.setInterval(500)
     if recorder:heartbeat.timeout.connect(recorder.beat);heartbeat.start()
     window = Window()
@@ -913,6 +917,8 @@ def gui(args: argparse.Namespace) -> int:
                     QTimer.singleShot(200,finish)
                 window.browser_probe.page().toPlainText(checked)
             window.browser_probe.loadFinished.connect(browser_loaded);window.browser_probe.setHtml('<html><body style="background:#171d25;color:#d6d7d8;font:24px sans-serif"><h1>Browser component ready</h1><p>Local page · no account or network request</p></body></html>');window.browser_probe.show()
+            window.browser_probe.loadProgress.connect(lambda value:diagnostics.event('smoke.browser.progress',str(value)))
+            window.browser_probe.page().renderProcessTerminated.connect(lambda status,code:diagnostics.event('smoke.browser.renderer',str(status)+' '+str(code)))
             QTimer.singleShot(30000,app.quit)
         except Exception as error:
             diagnostics.event('smoke.browser.failed',str(error));QTimer.singleShot(0,app.quit)

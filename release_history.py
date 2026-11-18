@@ -1,5 +1,5 @@
 """Populate the publisher's ignored cache with the last three stable releases."""
-import json
+import json,os,subprocess
 from pathlib import Path
 import threading
 import updater
@@ -11,7 +11,11 @@ from update_transfer import download
 def ensure_history(root,current):
     root=Path(root);cache=root/'release';cache.mkdir(exist_ok=True)
     try:
-        releases=updater.get_json(f'https://api.github.com/repos/{updater.REPO}/releases?per_page=20')
+        publisher=os.environ.get('WVD_PUBLISHER_GH')
+        if publisher:
+            if not Path(publisher).is_absolute():raise ValueError('发布工具必须使用绝对路径。')
+            releases=json.loads(subprocess.check_output([publisher,'api',f'repos/{updater.REPO}/releases?per_page=20'],encoding='utf-8',timeout=30))
+        else:releases=updater.get_json(f'https://api.github.com/repos/{updater.REPO}/releases?per_page=20')
         eligible=[]
         for release in releases:
             try:
