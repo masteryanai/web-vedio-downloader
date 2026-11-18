@@ -934,6 +934,7 @@ def gui(args: argparse.Namespace) -> int:
         result=app.exec()
         return (0 if inspection_ok[0] else 2) if getattr(args,'smoke_inspect',False) or getattr(args,'smoke_browser',False) else result
     finally:
+        if getattr(args,'smoke_browser',False):qInstallMessageHandler(None)
         heartbeat.stop()
         if recorder:recorder.stop()
         instance.close()
