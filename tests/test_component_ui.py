@@ -11,6 +11,14 @@ from gui_gc import GuiCollector
 class ComponentUI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
+    def test_closing_verification_does_not_open_browser_after_late_success(self):
+        collector=GuiCollector(self.app)
+        def finish_after_cancel(cancel,progress):cancel.wait(2)
+        QTimer.singleShot(30,lambda:self.app.activeModalWidget().reject())
+        try:
+            with tempfile.TemporaryDirectory() as folder,patch('component_ui.browser_ready',return_value=False),patch('component_ui.descriptor',return_value={'size':100}),patch('component_ui.folder',return_value=Path(folder)),patch('component_ui.activate_browser',side_effect=finish_after_cancel):
+                self.assertFalse(ensure_browser())
+        finally:collector.close()
     def test_existing_component_verification_keeps_gui_heartbeat_running(self):
         ticks=[];threads=[];timer=QTimer();timer.setInterval(5);timer.timeout.connect(lambda:ticks.append(True));timer.start();owner=threading.get_ident();collector=GuiCollector(self.app)
         def verify(cancel,progress):

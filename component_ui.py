@@ -47,9 +47,9 @@ def ensure_browser(parent=None):
     timer=QTimer(dialog);timer.timeout.connect(close_check);timer.start(100)
     dialog.exec()
     if jobs.running:
-        token.set()
+        if not finished:token.set()
         from PySide6.QtWidgets import QApplication
         import time
         while jobs.running:QApplication.processEvents();time.sleep(.01)
-    if not finished:return False
+    if not finished or token.is_set():return False
     return True
