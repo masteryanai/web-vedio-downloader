@@ -8,7 +8,9 @@ class AddFlowUI(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             env=dict(os.environ,WVD_DATA_DIR=str(Path(folder)/'data'),WVD_PRODUCT=product,QT_QPA_PLATFORM='offscreen',PYTHONUTF8='1')
             result=subprocess.run([sys.executable,'-X','utf8',__file__,'--check',product],env=env,capture_output=True,text=True,timeout=45)
-            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            diagnostics=Path(folder)/'data/diagnostics/runtime.log'
+            evidence=diagnostics.read_text(encoding='utf-8',errors='replace')[-12000:] if result.returncode and diagnostics.exists() else ''
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr+evidence)
 
 def check(product):
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -56,5 +58,9 @@ def check(product):
     assert done
 
 if __name__=='__main__':
-    if '--check' in sys.argv:check(sys.argv[-1])
+    if '--check' in sys.argv:
+        try:check(sys.argv[-1])
+        except BaseException:
+            import traceback
+            traceback.print_exc(file=sys.__stderr__);raise SystemExit(1)
     else:unittest.main()

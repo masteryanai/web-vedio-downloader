@@ -651,8 +651,11 @@ def gui(args: argparse.Namespace) -> int:
 
         def animate_added(self):
             from PySide6.QtCore import QPropertyAnimation,QEasingCurve
-            label=QLabel('+1 已加入下载任务',self);label.setStyleSheet('color:#285ed4;background:#e9f0ff;padding:8px;border-radius:6px;')
+            label=QLabel('+1 已加入下载任务',self);label.setStyleSheet('color:#dceaf6;background:#243444;padding:8px;border-radius:6px;')
             label.adjustSize();label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents);label.show();label.raise_()
+            from motion import enabled
+            if not enabled():
+                label.move(self.task_button.mapTo(self,self.task_button.rect().topLeft()));QTimer.singleShot(1200,label.deleteLater);return
             animation=QPropertyAnimation(label,b'pos',self);animation.setDuration(500)
             animation.setStartValue(self.download_button.mapTo(self,self.download_button.rect().topLeft()))
             animation.setEndValue(self.task_button.mapTo(self,self.task_button.rect().topLeft()))

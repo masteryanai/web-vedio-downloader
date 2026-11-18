@@ -104,7 +104,7 @@ class FloatingPanel(QFrame):
         super().__init__(None,Qt.WindowType.Tool|Qt.WindowType.FramelessWindowHint|Qt.WindowType.WindowStaysOnTopHint)
         self.desktop=desktop;self.cfg=cfg;self.edge=cfg['float_edge'];self.collapsed=False;self.shutting_down=False
         self.pressed=False;self.dragging=False;self.menu_open=False;self.page_id=None;self.stats=None
-        self.setObjectName('floatingMonitor');self.setStyleSheet('#floatingMonitor {background:#f5f8ff;border:1px solid #8ca9df;border-radius:7px;}')
+        self.setObjectName('floatingMonitor');self.setStyleSheet('#floatingMonitor {background:#1b2838;color:#e0ebf5;border:1px solid #476174;border-radius:7px;}')
         self.setWindowTitle('下载悬浮框');self.setMouseTracking(True);self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.layout_box=QVBoxLayout(self);self.layout_box.setContentsMargins(6,6,6,6)
