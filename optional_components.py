@@ -1,5 +1,5 @@
 """Verified optional browser runtime, kept inside this product's installation."""
-import hashlib,importlib.util,json,os,re,shutil,sys,tempfile,zipfile
+import hashlib,importlib.util,json,os,re,shutil,sys,tempfile,time,zipfile
 from pathlib import Path,PurePosixPath
 from runtime import PRODUCT_ID,APP_VERSION,program_dir,resource_path
 
@@ -38,13 +38,22 @@ def safe_relative(name):
 def folder(value):
     return program_dir()/'components'/'browser'/(APP_VERSION+'-'+value['sha256'][:16])
 
-def verify(root,value):
+def verify(root,value,cancel=None,progress=lambda _:None):
     from library_archive import reject_links
+    total=sum(row['size'] for row in value['files']);done=0;reported=0
     for row in value['files']:
+        if cancel is not None and cancel.is_set():raise RuntimeError('已取消组件校验，任务保留。')
         path=Path(root).joinpath(*safe_relative(row['path']).parts);reject_links(path)
         if not path.is_file() or path.stat().st_size!=row['size']:return False
+        sha=hashlib.sha256()
         with path.open('rb') as stream:
-            if hashlib.file_digest(stream,'sha256').hexdigest()!=row['sha256']:return False
+            while block:=stream.read(1024*1024):
+                if cancel is not None and cancel.is_set():raise RuntimeError('已取消组件校验，任务保留。')
+                sha.update(block);done+=len(block)
+                now=time.monotonic()
+                if now-reported>=.1 or done==total:
+                    progress({'stage':'校验已安装的浏览器组件','processed_bytes':done,'total_bytes':total});reported=now
+        if sha.hexdigest()!=row['sha256']:return False
     return True
 
 def install_from_archive(archive,value,cancel,progress=lambda _:None):
@@ -97,12 +106,14 @@ def fetch_browser(cancel,progress):
 
 _handles=[]
 _activated=False
-def activate_browser():
+def browser_ready():return _activated or importlib.util.find_spec('PySide6.QtWebEngineCore') is not None
+
+def activate_browser(cancel=None,progress=lambda _:None):
     global _activated
     if _activated:return
     if importlib.util.find_spec('PySide6.QtWebEngineCore') is not None:_activated=True;return
     value=descriptor();root=folder(value)
-    if not verify(root,value):raise ComponentRequired('需要浏览器组件，请在账号或解析窗口点击前往验证后安装。')
+    if not verify(root,value,cancel,progress):raise ComponentRequired('浏览器组件缺失或改变，请使用离线完整包修复；现有文件未覆盖。')
     import PySide6
     path=root/'PySide6';PySide6.__path__.append(str(path))
     if os.name=='nt':

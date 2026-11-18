@@ -885,7 +885,7 @@ def gui(args: argparse.Namespace) -> int:
             window.close()
             app.quit()
         QTimer.singleShot(900, capture)
-    if not args.smoke_ui and not getattr(args,'smoke_inspect',False):
+    if not args.smoke_ui and not getattr(args,'smoke_inspect',False) and not getattr(args,'smoke_browser',False):
         def notify_incidents():
             if window.desktop.hidden:
                 QTimer.singleShot(2000,notify_incidents);return
@@ -898,8 +898,10 @@ def gui(args: argparse.Namespace) -> int:
     inspection_ok=[False]
     if getattr(args,'smoke_browser',False):
         try:
-            from optional_components import activate_browser
-            activate_browser()
+            from optional_components import browser_ready,descriptor,folder,ComponentRequired
+            if not browser_ready() and not folder(descriptor()).is_dir():raise ComponentRequired('探测不下载组件。')
+            from component_ui import ensure_browser
+            if not ensure_browser(window):raise ComponentRequired('本地组件未就绪。')
             from PySide6.QtWebEngineWidgets import QWebEngineView
             window.browser_probe=QWebEngineView(window);window.browser_probe.setWindowFlags(Qt.WindowType.Window);window.browser_probe.resize(600,300)
             def browser_loaded(ok):

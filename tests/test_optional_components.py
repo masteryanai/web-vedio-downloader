@@ -4,6 +4,12 @@ from unittest.mock import patch
 import optional_components as components
 
 class OptionalComponents(unittest.TestCase):
+    def test_cancel_installed_component_hashing_preserves_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);file=root/'PySide6/Qt6WebEngineCore.dll';file.parent.mkdir();body=b'x'*(3*1024*1024);file.write_bytes(body)
+            value={'files':[{'path':'PySide6/Qt6WebEngineCore.dll','size':len(body),'sha256':hashlib.sha256(body).hexdigest()}]};cancel=threading.Event()
+            with self.assertRaisesRegex(RuntimeError,'取消'):components.verify(root,value,cancel,lambda _:cancel.set())
+            self.assertEqual(file.read_bytes(),body)
     def test_legitimate_nested_qml_components_namespace(self):
         components.safe_relative('PySide6/qml/QtQuick/VirtualKeyboard/Components/Key.qml')
         with self.assertRaises(ValueError):components.safe_relative('PySide6/components/data.json')
