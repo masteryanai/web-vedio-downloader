@@ -28,7 +28,9 @@ def split(full,base,release):
         for path in sorted(selected):
             relative=path.relative_to(full/'_internal').as_posix()
             with path.open('rb') as stream:sha=hashlib.file_digest(stream,'sha256').hexdigest()
-            rows.append({'path':relative,'size':path.stat().st_size,'sha256':sha});output.write(path,relative)
+            rows.append({'path':relative,'size':path.stat().st_size,'sha256':sha})
+            info=zipfile.ZipInfo(relative,date_time=(1980,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED;info.create_system=3;info.external_attr=0o100644<<16
+            with path.open('rb') as source,output.open(info,'w') as target:shutil.copyfileobj(source,target,1024*1024)
     with archive.open('rb') as stream:sha=hashlib.file_digest(stream,'sha256').hexdigest()
     descriptor={'asset':archive.name,'tag':'v'+APP_VERSION,'size':archive.stat().st_size,'sha256':sha,'files':rows}
     manifest={'application':'WebVideoDownloaderLite','version':APP_VERSION,'components':{'browser':descriptor}}
