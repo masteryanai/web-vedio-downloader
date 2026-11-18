@@ -15,9 +15,11 @@ QLineEdit:focus,QPlainTextEdit:focus,QComboBox:focus {border-color:#66c0f4;}
 QPushButton:focus {border-color:#66c0f4;}
 QPushButton:hover {background:#46505e;color:white;} QPushButton:pressed {background:#24384a;}
 QPushButton#primary {background:#0878c0;color:white;border-color:#0878c0;font-weight:600;}
+QPushButton#primary:hover {background:#086b9f;border-color:#086b9f;} QPushButton#primary:pressed {background:#075986;border-color:#075986;}
 QPushButton#nav {background:transparent;border:0;font-size:21px;font-weight:600;}
 QPushButton#sideButton {text-align:left;background:transparent;border:0;color:#b8bcbf;}
 QPushButton:disabled {color:#9aa9b7;background:#25303b;border-color:#3a4652;}
+QPushButton#primary:disabled {color:#9aa9b7;background:#25303b;border-color:#3a4652;}
 QLineEdit,QPlainTextEdit,QTextEdit,QTextBrowser,QComboBox,QSpinBox,QDoubleSpinBox {background:#202329;color:#c2d7e9;placeholder-text-color:#a6b7c7;border:1px solid #3d434d;border-radius:3px;padding:6px;selection-background-color:#3e5068;}
 QComboBox QAbstractItemView {background:#1c2e3e;color:#d1e4f4;selection-background-color:#345772;}
 QTableWidget,QListWidget,QScrollArea {background:#202329;color:#bfd3e4;border:0;alternate-background-color:#292e36;gridline-color:#34485b;}
@@ -25,7 +27,7 @@ QTableWidget::item:selected,QListWidget::item:selected {background:#3e5068;color
 QHeaderView::section {background:#292e36;color:#98b5cb;padding:7px;border:0;border-bottom:1px solid #405368;}
 QTableWidget QHeaderView {background:#292e36;} QTableCornerButton::section {background:#292e36;border:0;}
 QTabBar::tab {background:#213140;color:#93afc6;padding:10px 18px;} QTabBar::tab:selected {background:#3e5068;color:#e7f5ff;border-bottom:2px solid #1a9fff;}
-QProgressBar {background:#10202d;border:0;border-radius:2px;color:#dfedf8;text-align:center;} QProgressBar::chunk {background:#1a9fff;border-radius:2px;}
+QProgressBar {background:#10202d;border:0;border-radius:2px;color:#dfedf8;text-align:center;} QProgressBar::chunk {background:#086b9f;border-radius:2px;}
 QMenu {background:#253645;border:1px solid #435a6c;} QMenu::item {padding:8px 25px;} QMenu::item:selected {background:#3d607b;}
 QScrollBar:vertical {background:#172431;width:11px;} QScrollBar::handle:vertical {background:#49647a;min-height:25px;} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical {height:0;}
 QToolTip {background:#233a4c;color:#dfecf7;border:1px solid #53748c;}
